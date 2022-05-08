@@ -1,0 +1,69 @@
+Copyright (c) 2021 Micah Leiff Nutt 
+All rights reserved.
+
+jsonp is a JSON parser for extracting attibute-value pairs and arrays from JSON objects.
+
+Initially, jsonp was a simple program used to produce output compatable with bash variable assignments for a Cloudflare IP update script; "grep -P" statements worked but were awkward and unreadable .  jsonp very quickly morphed into a more robust and utilitarian tool.
+
+A recursive descent parser is implimented which utilizes a LEX based lexical analyzer for token retrieval from standard input, a file, or an argument string.
+
+CONTENTS
+	README            - this file
+	LICENSE           - BSD liscencing agreement
+	Makefile          - the, er, makefile
+	jsonp.parse.c     - the parser source
+	jsonp.l           - the lexical analyzer source
+	jsonp.tab.h       - header file for .[cl] source
+	./examples/*.json - JSON example objects
+
+REQUIREMENTS
+	C compiler (such as "gcc")
+	lex compatable code generator (such as "flex") and the developer's library.
+	make utility
+
+INSTALL
+	Unpack the archive into a directory of your choice.
+
+	Make the jsonp program:
+	$ make
+	
+	Optionally install to /usr/local/bin:
+	$ make install
+
+
+USAGE
+	Usage: jsonp [OPTION]... [INFILE]
+
+	Output Formating:
+		-=,  --assignment[=STRING]	Output STRING as assignment token instead of ":" (default is "=")
+		-a   --array[=STRING]		Output characters for arrays instead of "[,]" (default is "( )")
+		-b,  --bash-variables		Output bash-friendly variable names, i.e., [_a-zA-Z][_a-zA-Z0-9]+ (substituting '_' for invalid characters)
+		-B,  --bash			Alias for --wrap=$ --unquote=keys --escape=none --array-chars="( )" --assignment="=" --bash-variables
+		-e,  --escape[=WHAT]		Escape single quotes in value strings; where WHAT is "none" "keys", "values" or "all" (default)
+		-p,  --prefix[=STRING]		Prefix key name (Default is "JSON_" or "JTYP_" if --type)
+		-u,  --unquote[=WHAT]		Strip double quotes from WHAT: "none" "keys" "values" or "all" (default)
+		-v,  --values-only[=strip]	Output only the values of "key:value" pairs; optionally strip surrounding array characters
+		-w,  --wrap[=$|TOGGLE]		Wrap single quotes around "complex" pairs (optionaly prefix with a bash-friendly "$") or where TOGGLE is "on" or "off"
+
+	Output Control
+		-c,  --count			Output the number of base keys (or array elements)
+		-j,  --json[=KIND]		Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
+		-k,  --key=STRING		Output only the key matching STRING
+		-l,  --list[=1]			Output only the base keys (or array elements); optionally output on one line
+		-t,  --type			Output the "type" of keys (or array elements) instead of values; can use with --json, --key, --list (default) or -NUM
+		-NUM				Output only the nth key (or nth array element)
+
+	Input/Output
+		-o,  --output=OUTFILE		Output to OUTFILE instead of stdout
+		-S,  --string=STRING		Parse STRING instead of stdin or INFILE
+
+	Miscellaneous:
+		-h,  --help			Display this help and exit
+		-q   --quiet, --silent		Suppress output
+		-s   --no-messages		Suppress error and warning messages
+		-V   --version			Display version information and exit
+		     --verbose			Be verbose about --json validation
+
+EXAMPLES
+
+

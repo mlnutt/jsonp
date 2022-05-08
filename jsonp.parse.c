@@ -1,0 +1,1225 @@
+#define _GNU_SOURCE
+
+#include <stdio.h>
+#include <string.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <ctype.h>
+
+#include <stdarg.h>
+#include <getopt.h>
+
+#include <str.h>
+
+#include "jsonp.tab.h"
+
+#define FIRST_YEAR "2021"
+
+const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
+                         "All rights reserved.\n\n";
+
+#define PGM_NAME "jsonp"
+
+#define VER_MAJOR 1
+#define VER_MINOR 1
+#define VER_DATE __DATE__
+
+#define VER_RELEASE "release"
+
+/*
+object
+	{}
+	{ members }
+	array
+members
+	pair
+	pair , members
+pair
+	string : value
+array
+	[]
+	[ elements ]
+elements
+	value
+	value, elements
+value
+	string
+	number
+	object
+	array
+	true
+	false
+	null
+*/
+
+#define OPTIONS "0123456789=::a::bBce::hj::k:l::o:p::u::qsS:tw::v::V"
+
+typedef enum {
+	OPT_ASSIGNMENT  = '=',
+	OPT_ARRAY	= 'a',
+	OPT_BASH_VARS   = 'b',
+	OPT_BASH        = 'B',
+	OPT_COUNT       = 'c',
+	OPT_ESCAPE      = 'e',
+ 	OPT_HELP        = 'h',
+	OPT_JSON        = 'j',
+	OPT_KEY         = 'k',
+	OPT_LIST        = 'l',
+	OPT_OUTPUT      = 'o',
+	OPT_PREFIX      = 'p',
+	OPT_QUIET	= 'q',
+	OPT_NO_MESSAGES	= 's',
+	OPT_STRING	= 'S',
+	OPT_TYPE        = 't',
+	OPT_UNQUOTE     = 'u',
+	OPT_VALUES_ONLY = 'v',
+ 	OPT_VERSION	= 'V',
+	OPT_WRAP        = 'w',
+
+	OPT_VERBOSE     = 200,
+} option_t;
+
+static struct option long_options[] = {
+	{"assignment`",	        optional_argument,	0,		OPT_ASSIGNMENT},
+	{"array",		optional_argument,	0,		OPT_ARRAY},
+	{"bash-variables",	no_argument,		0,		OPT_BASH_VARS},
+	{"bash-vars",		no_argument,		0,		OPT_BASH_VARS},
+	{"bash",	        no_argument,		0,		OPT_BASH},
+	{"escape",		optional_argument,	0,		OPT_ESCAPE },
+	{"prefix",		optional_argument,	0,		OPT_PREFIX },
+	{"unquote",		optional_argument,	0,		OPT_UNQUOTE },
+	{"values-only",		optional_argument,	0,		OPT_VALUES_ONLY },
+	{"wrap",		optional_argument,	0,		OPT_WRAP },
+
+	{"count",	        no_argument,		0,		OPT_COUNT},
+	{"json",		optional_argument,	0,		OPT_JSON },
+	{"JSON",		optional_argument,	0,		OPT_JSON },
+	{"key",			required_argument,	0,		OPT_KEY },
+	{"attribute",		required_argument,	0,		OPT_KEY },
+	{"name",		required_argument,	0,		OPT_KEY },
+	{"field",		required_argument,	0,		OPT_KEY },
+	{"type",		no_argument, 		0,		OPT_TYPE },
+	{"kind",		no_argument, 		0,		OPT_TYPE },
+	{"list",	        optional_argument,	0,		OPT_LIST},
+
+	{"output",		required_argument,	0,		OPT_OUTPUT },
+	{"string",		required_argument,	0,		OPT_STRING },
+
+	{"help",		no_argument,		0,		OPT_HELP },
+	{"quiet",		no_argument,		0,		OPT_QUIET },
+	{"silent",		no_argument,		0,		OPT_QUIET },
+	{"no-messages",		no_argument,		0,		OPT_NO_MESSAGES },
+	{"verbose",		no_argument,		0,		OPT_VERBOSE },
+	{"version",		no_argument,		0,		OPT_VERSION },
+	{0,			0,			0,		0 },
+};
+
+typedef enum {
+	escape_none,
+	escape_keys,
+	escape_values,
+	escape_all,
+} escape_t;
+
+static escape_t  escape = escape_none;
+
+typedef enum {
+	unquote_none,
+	unquote_keys,
+	unquote_values,
+	unquote_all,
+} unquote_t;
+
+static unquote_t unquote = unquote_none;
+
+static int bash_vars   = 0;
+static int value_only  = 0;
+static int wrap_quotes = 0;
+static int dollar      = 0;
+static int no_arrays   = 1;
+
+static int count_elements = 0;
+static int element_count  = 0;
+static int get_element_no = 0;
+
+static int count_keys    = 0;
+static int key_count     = 0;
+static int get_key_no    = 0;
+static int got_key       = 0;
+static int list_keys     = 0;
+static int list_elements = 0;
+static int get_type      = 0;
+
+static int quiet           = 0;
+static int quiet_arg       = 0;
+static int no_messages     = 0;
+static int no_messages_arg = 0;
+static int verbose         = 0;
+
+static int level        = 0;
+static int in_array     = 0;
+static int open_quote   = 0;
+static int ignore_comma = 0;
+static int show_type    = 0;
+
+static char *prefix_json  = "JSON_";
+static char *prefix_type  = "JTYP_";
+static int  custom_prefix = 0;
+
+/*
+ * string buffers
+ */
+static char *prefix         = 0;
+static char *get_key        = 0;
+static char *assignment     = 0;
+static char *key_name       = 0;
+static char *unquoted_text  = 0;
+static char *escaped_text   = 0;
+static char *bash_key_text  = 0;
+static char *string         = 0;
+static char *array_beg      = 0;
+static char *array_sep      = 0;
+static char *array_end      = 0;
+
+typedef enum {
+	json_unknown,
+	json_any,
+	json_object,
+	json_array,
+} json_t;
+
+static json_t json  = json_unknown;
+static json_t check = json_unknown;
+
+static int check_type = 0;
+
+/*
+ * Forward declarations 
+ */
+
+static char *escape_string(char *text, escape_t what);
+static char *bash_key(char *text);
+static char *unquote_value(char *text);
+static char *key(char *text);
+
+static void json_type(int type);
+
+static int yylookahead(void);
+static int _yylex(void);
+
+static int elements(int yy);
+static int array(int yy);
+static int value(int yy);
+static int pair(int yy);
+static int keys(int yy);
+static int object(int yy);
+
+static void cleanup(int rc);
+
+static void output(const char *fmt, ...) {
+	va_list valist;
+
+	if (!quiet) {
+		va_start(valist, fmt);
+		vprintf(fmt, valist);
+		va_end(valist);
+	}
+}
+
+static void err_msg(const char *fmt, ...) {
+	va_list valist;
+
+	if (!no_messages) {
+		va_start(valist, fmt);
+		fprintf(stderr, "Error: ");
+		vfprintf(stderr, fmt, valist);
+		fprintf(stderr, "\n");
+		va_end(valist);
+	}
+
+	cleanup(1);
+}
+
+static void wrn_msg(const char *fmt, ...) {
+	va_list valist;
+
+	if (!no_messages) {
+		va_start(valist, fmt);
+		fprintf(stderr, "Warning: ");
+		vfprintf(stderr, fmt, valist);
+		fprintf(stderr, "\n");
+		va_end(valist);
+	}
+}
+
+static void vbs_msg(const char *fmt, ...) {
+	va_list valist;
+
+	if (verbose) {
+		va_start(valist, fmt);
+		vprintf(fmt, valist);
+		printf("\n");
+		va_end(valist);
+	}
+}
+
+/*
+ * Replace all ' characters with \'
+ */
+static char *escape_string(char *text, escape_t what) {
+	static const char  pattern     = '\'';
+	static const char *replacement = "\\'";
+	char              *ptr;
+	char              *location;
+	char              *new_text;
+	int                count       = 0;
+
+	if (!what) {
+		return text;
+	}
+
+	for (ptr = text; location = strchr(ptr, pattern); ptr = location + 1) {
+		count++;
+	}
+
+	if (!count) {
+		return text;
+	}
+
+	new_text = escaped_text = (char *) realloc( escaped_text, sizeof(char) * (strlen(text) + count + 1) );
+
+	for (ptr = text; location = strchr(ptr, pattern); ptr = location + 1) {
+		int skip = location - ptr;
+
+		strncpy(new_text, ptr, skip);
+		new_text += skip;
+		
+		strncpy(new_text, replacement, 2);
+		new_text += 2;
+	}
+	strcpy(new_text, ptr);
+
+	return escaped_text;
+}
+
+/*
+ * Replace all invalid bash variable characters with an _
+ */
+static char *bash_key(char *text) {
+	static const char replacement = '_';
+	int changes = 0;
+	char *ptr;
+
+	if (!bash_vars) {
+		return text;
+	}
+
+	if (*text == '"') {
+		asprintf(&bash_key_text, text + 1);
+
+		if (bash_key_text[strlen(bash_key_text) - 1] == '"') {
+			bash_key_text[strlen(bash_key_text)-1] = 0;
+		}
+	} else {
+		asprintf(&bash_key_text, text);
+	}
+
+	ptr = bash_key_text;
+
+	if (!isalpha(*ptr) && (*ptr != '_')) {
+		if (isdigit(*ptr)) {
+			++changes;
+			asprintf(&bash_key_text, "_%s", bash_key_text);
+			ptr = bash_key_text;
+		} else {
+			++changes;
+			*ptr = replacement;
+		}
+	}
+
+	for (++ptr; *ptr; ++ptr ) {
+		if (!is_bash_var_char(*ptr)) {
+			++changes;
+			*ptr = replacement;
+		}
+	}
+
+	if ((*bash_key_text == '_') && !*(bash_key_text + 1)) {
+		++changes;
+		asprintf(&bash_key_text, "__");
+	}
+
+	if (changes) {
+		wrn_msg("%s changed to \"%s\"", text, bash_key_text);
+	}
+
+	return bash_key_text;
+}
+
+/*
+ * Remove surronding " characters from a JSON value.
+ */
+static char *unquote_value(char *text) {
+	escape_string(text, escape & escape_values);
+
+	if ( !(unquote & unquote_values) || *text != '"') {
+		return text;
+	}
+
+	asprintf(&unquoted_text, text + 1);
+
+	if (unquoted_text[strlen(unquoted_text) - 1] == '"') {
+		unquoted_text[strlen(unquoted_text)-1] = 0;
+	}
+
+	return unquoted_text;
+}
+
+/*
+ * Possibly turn the key into a bash valid variabl or escape the ' in the key and possibly prepend the key with a prefix...
+ */
+static char *key(char *text) {
+
+	if (bash_vars) {
+		text = bash_key(text);
+	} else {
+		text = escape_string(text, escape & escape_keys);
+	}
+
+	if (unquote & unquote_keys) {
+		asprintf(&key_name, "%s%s", prefix ? prefix : "", text + ((unquote & unquote_keys) && (*text == '"') ? 1 : 0));
+		if (key_name[strlen(key_name) - 1] == '"') {
+			key_name[strlen(key_name) - 1] = 0;
+		}
+
+	} else {
+		asprintf(&key_name, "%s%s%s", *text == '"' ? "\"" : "", prefix ? prefix : "", text + (*text == '"' ? 1 : 0) );
+	}
+
+	return key_name;
+}
+
+/*
+ * Look Ahead at the next token to be returned by lex.
+ */
+static int   lookahead      = 0;
+static char *lookahead_text = 0;
+
+static int yylookahead(void) {
+	lookahead = yylex();
+	asprintf(&lookahead_text, yytext);
+
+	return lookahead;
+}
+
+/*
+ * yylex() wrapper to return a Look Ahead, if needed, and to print out the token's corresponding string if necessary.
+ */
+static char *_yytext = 0;
+
+static int _yylex(void) {
+	int yy;
+
+	if (lookahead) {
+		yy = lookahead;
+		asprintf(&_yytext, lookahead_text);
+		lookahead = 0;
+	} else {
+		yy = yylex();
+		asprintf(&_yytext, yytext);
+	}
+
+	if (open_quote) {
+		output(escape_string(_yytext, wrap_quotes || (escape & escape_values)));
+	}
+
+	return yy;
+}
+
+/*
+ * Output the type of JSON item...
+ */
+static void json_type(int type) {
+	if ( !quiet_arg ) {
+		switch (type) {
+			case STRING:
+				printf("STRING");
+				break;
+			case null:
+				printf("null");
+				break;
+			case true:
+			case false:
+				printf("BOOLEAN");
+				break;
+			case NUMBER:
+				printf("NUMBER");
+				break;
+			case BEGIN_OBJECT:
+				printf("OBJECT");
+				break;
+			case BEGIN_ARRAY:
+				printf("ARRAY");
+				break;
+			default:
+				return;
+		}
+		printf("%c", list_keys == 1 ? ' ' : '\n');
+	}
+}
+
+/*
+ * Begin Recursive Descent parser functions...
+ */
+
+/*
+ * Array elements...
+ */
+static int elements(int yy) {
+
+	if ( level == 1 && get_type && list_elements ) {
+		show_type = 1;
+	}
+
+	if ((get_element_no || count_elements) && (level == 1)) {
+		++element_count;
+
+		if (element_count == get_element_no) {
+			quiet = quiet_arg;
+			no_messages = no_messages_arg;
+		}
+	}
+
+	yy = value(yy);
+
+	if ((level == 1) && (get_element_no && (element_count == get_element_no))) {
+		quiet = no_messages = 1;
+	}
+
+	yy = _yylex();
+
+	if (yy == COMMA) {
+		if (ignore_comma && (level == 1)) {
+			output("%c", list_elements == 1 ? ' ' : '\n');
+		}
+
+		yy = elements(yy = _yylex());
+
+	}
+
+	return yy;
+}
+
+/*
+ * Array [ ... ]...
+ */
+static int array(int yy) {
+	if (level == 1) {
+		in_array = 1;
+		if ( list_elements ) {
+			if (get_type) {
+				show_type = 1;
+			}
+			ignore_comma = 1;
+		} else {
+			output("%s%s", (value_only == 1) ? "" : array_beg, value_only == 1 ? "" : " ");
+		}
+	}
+
+	yy = _yylex();
+
+	if (yy != END_ARRAY) {
+		yy = elements(yy);
+	}
+	
+	if (level == 1 && yy == END_ARRAY) {
+		if ( list_elements) {
+			ignore_comma = 0;
+		} else {
+			output("%s", (value_only == 1) ? "" : !get_element_no ? array_end : "");
+		}
+		in_array = 0;
+	}
+
+	return yy;
+}
+
+/* Value:
+ * 	STRING
+ * 	true
+ * 	false
+ * 	null
+ * 	NUMBER
+ * 	OBJECT
+ * 	ARRAY
+ */
+static int value(int yy) {
+	int i;
+
+	if (get_element_no && get_type) {
+		if (element_count == get_element_no) {
+			if (show_type) {
+				json_type(yy);
+				show_type = 0;
+			}
+			quiet=1;
+		}
+	} else if ( show_type || (get_type && got_key) ) {
+		json_type(yy);
+
+		quiet=1;
+		show_type=0;
+
+		if ( get_type && got_key ) {
+			get_type=0;
+		}
+	}
+
+	switch (yy) {
+		case STRING:
+		case true:
+		case false:
+		case null:
+		case NUMBER: {
+			if (in_array) {
+				if (!open_quote) {
+					output("%s%s", unquote_value(_yytext), yylookahead() == END_ARRAY ? " " : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
+				}
+			} else if (level == 1) {
+				output("%s", unquote_value(_yytext));
+			}
+			break;
+		}
+		case BEGIN_OBJECT: {
+			if (in_array && !open_quote++) {
+				output("%s{", wrap_quotes ? (dollar ? "$'" : "'") : "");
+			}
+			yy = object(yy);
+			break;
+		}
+		case BEGIN_ARRAY: {
+			yy = array(yy);
+			break;
+		}
+		default:
+			err_msg("Expected a value but got \"%s\"", *_yytext ? _yytext : "EOF");
+			break;
+	}
+
+	return yy;
+}
+
+/* Pair:
+ * 	STRING:value
+ */
+static int pair(int yy) {
+	if (yy == STRING) {
+		if (++level == 1) {
+			if (++key_count == get_key_no) {
+				quiet = quiet_arg;
+				no_messages = no_messages_arg;
+				if ( get_type ) {
+					show_type = 1;
+				}
+			} else if (get_key) {
+				if (strcmp(get_key, _yytext) == 0) {
+					got_key = 1;
+					quiet = quiet_arg;
+					no_messages = no_messages_arg;
+				}
+			} 
+
+			 if (list_keys) {
+				if ( get_type && ! get_key) {
+					show_type=1;
+					if ( !value_only && !quiet_arg ) {
+						printf("%s%s", key(_yytext), assignment); // yes, printf() NOT output()
+					}
+				} else {
+					printf("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n"); // yes, printf() NOT output()
+				}
+			} else if (!value_only && !open_quote) {
+				output("%s%s", key(_yytext), yylookahead() == COLON ? assignment : "");
+			}
+		}
+
+		yy = _yylex();
+	
+		if (yy == COLON) {
+			yy = value(yy = _yylex());
+
+			if (level-- == 1) {
+				output("\n");
+				if ((key_count == get_key_no) || got_key) {
+					quiet = no_messages = 1;
+				}
+			}
+		} else {
+			err_msg("Expected \'COLON\' but got \"%s\"", *_yytext ? _yytext : "EOF");
+		}
+	} else {
+		err_msg("Expected \'STRING\' but got \"%s\"", *_yytext ? _yytext : "EOF");
+	}
+		
+	return yy;
+}
+
+/*
+ * Keys
+ * 	STRING:value...
+ */
+static int keys(int yy) {
+	
+	yy = pair(yy);
+
+	yy = _yylex();
+
+	if (yy == COMMA) {
+		yy = keys(yy = _yylex());
+	}
+
+	return yy;
+}
+
+/*
+ * Object:
+ * 	{ keys... }
+ */
+static int object(int yy) {
+	if (level == 1 && !in_array) {
+		output("%s{", wrap_quotes ? (dollar ? "$'" : "'"): "");
+		open_quote = 1;
+	}
+
+	yy = _yylex();
+
+	if (yy != END_OBJECT) {
+		yy = keys(yy);
+	}
+	
+	if (in_array){
+		if ( !--open_quote) {
+			output("%s%s", wrap_quotes ? "'" : "", yylookahead() == END_ARRAY ? " " : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
+		}
+	} else if (level == 1 ) {
+		output("%s ", wrap_quotes ? "'" : "");
+		open_quote = 0;
+	}
+
+	return yy;
+}
+
+/*
+ * Free an allocated memory block and reinstantiate the ptr to zero
+ */
+static void _free(void **ptr) {
+	if (*ptr) {
+		free(*ptr);
+		*ptr = 0;
+	}
+}
+
+/*
+ * Free the allocated memor blocks and exit with any errorcode.
+ */
+static void cleanup(int rc) {
+
+	_free((void **) &string);
+
+	_free((void **) &_yytext);
+
+	_free((void **) &lookahead_text);
+
+	_free((void **) &unquoted_text);
+
+	_free((void **) &key_name);
+
+	_free((void **) &escaped_text);
+
+	_free((void **) &get_key);
+
+	_free((void **) &prefix);
+
+	_free((void **) &array_beg);
+
+	_free((void **) &array_sep);
+
+	_free((void **) &array_end);
+
+	_free((void **) &assignment);
+
+	_free((void **) &bash_key_text);
+
+	exit(rc);
+}
+
+static void version(void) {
+	char *this_year = strrchr(VER_DATE, ' ') + 1;
+
+	printf("\n");
+	printf("%s Version %i.%i %s (Built %s)\n\n", PGM_NAME, VER_MAJOR, VER_MINOR, VER_RELEASE, VER_DATE);
+	printf(copyright, strcmp(this_year, FIRST_YEAR) ? this_year : "\b ");
+	printf("There is NO WARRANTY, to the extent permitted by applicable law.\n");
+}
+
+static void little_help(void) {
+	printf("\n");
+	printf("Usage: %s [OPTION]...\n", PGM_NAME);
+	printf("Try `%s --help' for more information.\n", PGM_NAME);
+}
+
+static void help(void) {
+	version();
+
+	printf("\n");
+	printf("Usage: %s [OPTION]... [INFILE]\n", PGM_NAME);
+
+	printf("\nOutput Formating:\n");
+	printf("\t-=,  --assignment[=STRING]\tOutput STRING as assignment token instead of \":\" (default is \"=\")\n");
+	printf("\t-a   --array[=STRING]\t\tOutput characters for arrays instead of \"[,]\" (default is \"( )\")\n");
+	printf("\t-b,  --bash-variables\t\tOutput bash-friendly variable names, i.e., [_a-zA-Z][_a-zA-Z0-9]+ (substituting '_' for invalid characters)\n");
+	printf("\t-B,  --bash\t\t\tAlias for --wrap=$ --unquote=keys --escape=none --array-chars=\"( )\" --assignment=\"=\" --bash-variables\n");
+	printf("\t-e,  --escape[=WHAT]\t\tEscape single quotes in value strings; where WHAT is \"none\" \"keys\", \"values\" or \"all\" (default)\n");
+	printf("\t-p,  --prefix[=STRING]\t\tPrefix key name (Default is \"%s\" or \"%s\" if --type)\n", prefix_json, prefix_type);
+	printf("\t-u,  --unquote[=WHAT]\t\tStrip double quotes from WHAT: \"none\" \"keys\" \"values\" or \"all\" (default)\n");
+	printf("\t-v,  --values-only[=strip]\tOutput only the values of \"key:value\" pairs; optionally strip surrounding array characters\n");
+	printf("\t-w,  --wrap[=$|TOGGLE]\t\tWrap single quotes around \"complex\" pairs (optionaly prefix with a bash-friendly \"$\") or where TOGGLE is \"on\" or \"off\"\n");
+	printf("\nOutput Control\n");
+	printf("\t-c,  --count\t\t\tOutput the number of base keys (or array elements)\n");
+	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
+	printf("\t-k,  --key=STRING\t\tOutput only the key matching STRING\n");
+	printf("\t-l,  --list[=1]\t\t\tOutput only the base keys (or array elements); optionally output on one line\n");
+	printf("\t-t,  --type\t\t\tOutput the \"type\" of keys (or array elements) instead of values; can use with --json, --key, --list (default) or -NUM\n");
+	printf("\t-NUM\t\t\t\tOutput only the nth key (or nth array element)\n");
+	printf("\nInput/Output\n");
+	printf("\t-o,  --output=OUTFILE\t\tOutput to OUTFILE instead of stdout\n");
+	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
+	printf("\nMiscellaneous:\n");
+	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
+	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
+	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
+	printf("\t-V   --version\t\t\tDisplay version information and exit\n");
+	printf("\t     --verbose\t\t\tBe verbose about --json validation\n");
+
+	cleanup(0);
+}
+
+void init(void) {
+	asprintf(&array_beg, "[");
+	asprintf(&array_sep, ",");
+	asprintf(&array_end, "]");
+
+	asprintf(&assignment, ":");
+}
+
+static inline int c_todigit(const char c) {
+	int n = -1;
+
+	if (isdigit(c))
+		n = c - '0';
+
+	return n;
+}
+
+int main(int argc, char *argv[]) {
+	int c;
+	int yy;
+	int option_index = 0;
+	int rc = 0;
+	int arg;
+
+	init();
+
+	optind = 0;
+
+	while ( ((c = getopt_long(argc, argv, OPTIONS, long_options, &option_index)) != -1) ) {
+		static int new_number = 0; 
+		int        number;
+
+		if ((number = c_todigit(c)) >= 0) { // -NUM
+			if (new_number == 0) {
+				get_key_no = 0;
+			}
+
+			new_number *= 10;
+			new_number += number;
+
+			get_key_no = new_number;
+
+			continue;
+		} 
+
+		new_number = 0;
+
+		switch(c) {
+			case OPT_HELP: // -h, --help
+				help();
+				break;
+			case OPT_VERSION: // -V, --version
+				version();
+				cleanup(0);
+				break;
+			case OPT_STRING:
+				asprintf(&string, optarg);
+
+				yyin = fmemopen (string, strlen (string), "r");
+				break;
+			case OPT_OUTPUT:
+				freopen(optarg, "w", stdout);
+				break;
+			case OPT_JSON:
+				if (optarg) {
+					if (strcasecmp("array", optarg) == 0) {
+						check = json_array;
+					} else if (strcasecmp("object", optarg) == 0) {
+						check = json_object;
+					} else if (strcasecmp("any", optarg) == 0) {
+						check = json_any;
+					} else {
+						err_msg("Optional --json argument values are \"any\", \"object\" or \"array\"\n");
+					}
+				} else {
+					check = json_any;
+				}
+				if (list_keys) {
+					err_msg("Conflicting --list and --json arguments");
+				} else if (count_keys) {
+					err_msg("Conflicting --count and --json arguments");
+				} else if (get_key_no) {
+					err_msg("Conflicting -%d and --json arguments", get_key_no);
+				} else if (get_key) {
+					err_msg("Conflicting --key=%s and --json arguments", get_key);
+				}
+
+				quiet = 1;
+				break;
+			case OPT_BASH: // -B, --bash
+				bash_vars = 1;
+
+ 				wrap_quotes = 1;
+				dollar = 1;
+				escape = escape_none;
+				//unquote = unquote_keys;
+				unquote |= unquote_keys;
+				*array_beg = '('; 
+				*array_sep = ' ';; 
+				*array_end = ')';; 
+				strcpy(assignment, "=");
+				break;
+			case OPT_BASH_VARS: // -b, --bash-variables
+				bash_vars = 1;
+				break;
+			case OPT_ASSIGNMENT: // -a, --assignment 
+				if (optarg) {
+					asprintf(&assignment, optarg);
+				} else {
+					strcpy(assignment, "=");
+				}
+				break;
+			case OPT_PREFIX: // -p, --prefix (prefix pair identifier strings - default is "JSON_" or "JTYP_")
+				if (optarg) {
+					asprintf(&prefix, optarg);
+					custom_prefix = 1;
+				} else if ( ! custom_prefix ) {
+					asprintf(&prefix, get_type ? prefix_type : prefix_json);
+				}
+
+				//unquote |= unquote_keys;
+				break;
+			case OPT_COUNT: // -c, --count-keys (return the number of "level 1" keys)
+				if (list_keys) {
+					err_msg("Conflicting --list and --count arguments");
+				} else if (get_key_no) {
+					err_msg("Conflicting -%d and --count arguments", get_key_no);
+				} else if (get_key) {
+					err_msg("Conflicting --key=%s and --count arguments", get_key);
+				} else if (get_type) {
+					err_msg("Conflicting --type  and --count arguments");
+				} else if (check != json_unknown) {
+					err_msg("Conflicting --json and --count arguments");
+				}
+
+				quiet = 1;
+				count_keys = 1;
+				break;
+			case OPT_VERBOSE:
+				if (quiet_arg && get_type) {
+					err_msg("Conflicting --quiet and --verbose arguments");
+				}
+				verbose = 1;
+				break;
+			case OPT_QUIET: // -q, --quiet (suppress output)
+				if (verbose && get_type) {
+					err_msg("Conflicting --verbose and --quiet arguments");
+				}
+				quiet = quiet_arg = 1;
+				break;
+			case OPT_NO_MESSAGES: // -s, --no-messages (suppress error messages)
+				no_messages_arg = 1;
+				break;
+			case OPT_KEY: // -k, --key (return only value for matching pair identifier string)
+				if (get_key) {
+					err_msg("Conflicting --key=%s and --key=\"%s\" arguments", get_key, optarg);
+				} else if (list_keys) {
+					err_msg("Conflicting --list and --key=\"%s\" arguments", optarg);
+				} else if (get_key_no) {
+					err_msg("Conflicting -%d and --key=\"%s\" arguments", get_key_no, optarg);
+				} else if (count_keys) {
+					err_msg("Conflicting --count and --key=\"%s\" arguments", optarg);
+				} else if (check != json_unknown) {
+					err_msg("Conflicting --json and --key=\"%s\" arguments", optarg);
+				}
+
+				quiet = 1;
+				asprintf(&get_key, "\"%s\"", optarg);
+				break;
+			case OPT_TYPE: // -t, --type (return the type of key)
+				if (count_keys) {
+					err_msg("Conflicting --count and --type arguments");
+				} else if ( quiet_arg && verbose ) {
+					err_msg("Conflicting --quiet and --verbose arguments");
+				}
+
+				if ( prefix && !custom_prefix ) {
+					asprintf(&prefix, prefix_type );
+				}
+
+				quiet = 1;
+				get_type=1;
+				break;
+			case OPT_VALUES_ONLY: // -v, --values-only
+				if (optarg) {
+					if (strcasecmp(optarg, "strip") == 0 || strcasecmp(optarg, "no-arrays") == 0) {
+						value_only = 1;
+					} else {
+						err_msg("Optional --value-only argument value is \"strip\" \n");
+					}
+				} else
+					value_only = 2;
+				break;
+			case OPT_WRAP: // -w, --wrap
+				wrap_quotes = 1;
+
+				if (optarg) {
+					if (strcmp(optarg, "$") == 0) {
+						dollar = 1;
+					} else if (strcasecmp(optarg, "on") == 0 || strcasecmp(optarg, "yes") == 0) {
+						dollar = 0;
+					} else if (strcasecmp(optarg, "off") == 0 || strcasecmp(optarg, "no") == 0) {
+						wrap_quotes = 0;
+						dollar     = 0;
+					} else {
+						err_msg("Optional --wrap argument values are \"$\", \"on\" or \"off\"\n");
+					}
+				} else {
+					dollar = 0;
+				}
+
+				break;
+			case OPT_UNQUOTE: // -u, --unquote
+				if (optarg) {
+					if (strcasecmp(optarg, "none") == 0 || strcasecmp(optarg, "nothing") == 0 || strcasecmp(optarg, "off") == 0) {
+						unquote = unquote_none;
+					} else if (strcasecmp(optarg, "keys") == 0 || strcasecmp(optarg, "fields") == 0 || strcasecmp(optarg, "attributes") == 0 || strcasecmp(optarg, "names") == 0) {
+						unquote = unquote_keys;
+					} else if (strcasecmp(optarg, "values") == 0) {
+						unquote = unquote_values;
+					} else if (strcasecmp(optarg, "all") == 0 || strcasecmp(optarg, "everything") == 0 || strcasecmp(optarg, "on") == 0) {
+						unquote = unquote_all;
+					} else {
+						err_msg("Optional --unquote argument values are \"none\", \"keys\", \"values\" or \"all\"\n");
+					}
+				} else {
+					unquote = unquote_all;
+				}
+				break;
+			case OPT_ARRAY: // -a, --array
+				if (optarg) {
+					if (strlen(optarg) != 3) {
+						err_msg("STRING must be 3 characters\n");
+					} else {
+						*array_beg = optarg[0]; 
+						*array_sep = optarg[1]; 
+						*array_end = optarg[2]; 
+					}
+				} else {
+					*array_beg = '('; 
+					*array_sep = ' ';; 
+					*array_end = ')';; 
+				}
+				break;
+			case OPT_ESCAPE: // -e, --escape
+				if (optarg) {
+					if (strcasecmp(optarg, "none") == 0 || strcasecmp(optarg, "nothing") == 0 || strcasecmp(optarg, "off") == 0) {
+						escape = escape_none;
+					} else if (strcasecmp(optarg, "keys") == 0 || strcasecmp(optarg, "fields") == 0 || strcasecmp(optarg, "attributes") == 0 || strcasecmp(optarg, "names") == 0) {
+						escape |= escape_keys;
+					} else if (strcasecmp(optarg, "values") == 0) {
+						escape |= escape_values;
+					} else if (strcasecmp(optarg, "all") == 0 || strcasecmp(optarg, "everything") == 0 || strcasecmp(optarg, "on") == 0) {
+						escape = escape_all;
+					} else {
+						err_msg("Optional --escape argument values are \"none\", \"keys\", \"values\" or \"all\"\n");
+					}
+				} else {
+					escape |= escape_values;
+				}
+				break;
+
+			case OPT_LIST: // -l, --list
+				if (optarg) {
+					if (strcasecmp(optarg, "1") == 0) {
+						list_keys = 1;
+					} else {
+						err_msg("Optional --list-keys argument value is \"1\"\n");
+					}
+				} else {
+					list_keys = 2;
+				}
+
+				if (count_keys) {
+					err_msg("Conflicting --count and --list arguments");
+				} else if (get_key) {
+					err_msg("Conflicting --key=%s and --list arguments", get_key);
+				} else if (get_key_no) {
+					err_msg("Conflicting -%d and --list arguments", get_key_no);
+				} else if (check != json_unknown) {
+					err_msg("Conflicting --json and --list arguments");
+				} 
+
+				quiet = 1;
+				break;
+
+			case 0: 
+			case '?':
+			default:
+				rc = 1;
+				break;
+		}
+	}
+
+	no_messages = no_messages_arg;
+
+	if ( check && get_type ) {
+		check_type = 1;
+		get_type = 0;
+	}
+
+	if (get_key_no) {
+		if (list_keys) {
+			err_msg("Conflicting --list and -%d arguments", get_key_no);
+		} else if (get_key) {
+			err_msg("Conflicting --key=%s and -%d arguments", get_key, get_key_no);
+		} else if (count_keys) {
+			err_msg("Conflicting --count and -%d arguments", get_key_no);
+		} else if (check != json_unknown) {
+			err_msg("Conflicting --json and -%d arguments", get_key_no);
+		}
+		quiet = no_messages = 1;
+	}
+
+	for (arg = optind; (arg < argc); arg++) {
+		static int got_in = 0;
+			
+		if (!got_in++ && !string) {
+			if ( (yyin = fopen(argv[arg], "r")) == 0 ) {
+				no_messages = 0;
+				err_msg("Could not open file \"%s\" for input", argv[arg]);
+			}
+		} else {
+			no_messages = 0;
+			err_msg("Only one source can be parsed at a time");
+		}
+	}
+
+	if (!rc) {
+		yy = _yylex();
+
+		if (yy == BEGIN_OBJECT) { // "{ ... }"
+			json = json_object;
+
+			if (get_key) {
+				no_messages = 1;
+			} else if ( get_type && !list_keys && !get_key_no && !check ) {
+				list_keys=2;
+			}
+
+			yy = object(yy);
+
+			if (yy != END_OBJECT) {
+				no_messages = no_messages_arg;
+				err_msg("Expected '}' but got \"%s\"", *_yytext ? _yytext : "EOF");
+			}
+		} else if (yy == BEGIN_ARRAY) { // "[ ... ]"
+			if (get_key) {
+				no_messages = 0;
+				err_msg("Conflicting --key=%s with array object", get_key);
+			} else if (list_keys) {
+				quiet = quiet_arg;
+				no_messages = no_messages_arg;
+				list_elements = list_keys;
+				list_keys = 0;
+			} else if ( get_type ) {
+				quiet = 1;
+				
+				list_elements = 2;
+			}
+
+			json = json_array;
+
+			level = 1;
+			in_array = 1;
+
+			count_elements = count_keys;
+			count_keys     = 0;
+
+			get_element_no = get_key_no;
+			get_key_no = 0;
+
+			yy = array(yy);
+	
+			if (yy != END_ARRAY) {
+				err_msg("Expected ']' but got \"%s\"", *_yytext ? _yytext : "EOF");
+			}
+		} else { 
+			err_msg("Expected '{' or '[' but got \"%s\"", *_yytext ? _yytext : "EOF");
+		}
+
+		if (yy = _yylex()) { //Should be at EOF...
+			err_msg("Expecting EOF but got \"%s\"", *_yytext ? _yytext : "EOF");
+		}
+	
+		if (check) {
+			if (check_type && !quiet_arg ) {
+				printf("%s", json == json_object ? "OBJECT" : "ARRAY");
+			}
+
+			if ((check == json_array) && (json != json_array)) {
+				vbs_msg("Source is a valid JSON object but not a JSON array");
+				rc = 1;
+			} else if ((check == json_object) && (json == json_array)) {
+				vbs_msg("Source is a valid JSON array and not a JSON object");
+				rc = 1;
+			} else {
+				vbs_msg("Source is a valid JSON %s", json == json_object ? "object" : "array");
+			}
+		} else {
+			quiet = quiet_arg;
+			no_messages = no_messages_arg;
+
+			if (count_keys) {
+				output("%d", key_count);
+			} else if (count_elements) {
+				output("%d", element_count);
+			} else if (get_key && !got_key) {
+				err_msg("%s is not a key", get_key);
+			} else if (get_key_no > key_count) {
+				err_msg("There %s only %d key%s", key_count > 1 ? "are" : "is", key_count, key_count > 1 ? "s" : "");
+			} else if (get_element_no > element_count) {
+				err_msg("There %s only %d element%s", element_count > 1 ? "are" : "is", element_count, element_count > 1 ? "s" : "");
+			}
+		}	 
+	}
+
+	cleanup(rc);
+}
