@@ -115,28 +115,34 @@ static struct option long_options[] = {
 };
 
 typedef enum {
-	escape_none,
-	escape_keys,
-	escape_values,
-	escape_all,
+	escape_none   = 0x00,
+	escape_keys   = 0x01,
+	escape_values = 0x02,
+	escape_all    = escape_keys | escape_values,
+
 } escape_t;
 
 static escape_t  escape = escape_none;
 
 typedef enum {
-	unquote_none,
-	unquote_keys,
-	unquote_values,
-	unquote_all,
+	unquote_none   = 0x00,
+	unquote_keys   = 0x01,
+	unquote_values = 0x02,
+	unquote_all    = unquote_keys | unquote_values,
 } unquote_t;
 
 static unquote_t unquote = unquote_none;
 
+typedef enum {
+	wrap_nothing = 0x00,
+	wrap_dollar  = 0x01,
+	wrap_objects = 0x02,
+	wrap_arrays  = 0x04,
+} wrap_t;
+
 static int bash_vars   = 0;
 static int value_only  = 0;
-static int wrap_quotes = 0;
-static int dollar      = 0;
-static int no_arrays   = 1;
+static wrap_t wrap     = wrap_nothing;
 
 static int count_elements = 0;
 static int element_count  = 0;
@@ -430,7 +436,7 @@ static int _yylex(void) {
 	}
 
 	if (open_quote) {
-		output(escape_string(_yytext, wrap_quotes || (escape & escape_values)));
+		output(escape_string(_yytext, (wrap & wrap_objects) || (escape & escape_values)));
 	}
 
 	return yy;
@@ -485,8 +491,10 @@ static int elements(int yy) {
 		++element_count;
 
 		if (element_count == get_element_no) {
-			quiet = quiet_arg;
-			no_messages = no_messages_arg;
+			if ( !list_elements ) { //mln...
+				quiet = quiet_arg;
+				no_messages = no_messages_arg;
+			}
 		}
 	}
 
@@ -522,7 +530,7 @@ static int array(int yy) {
 			}
 			ignore_comma = 1;
 		} else {
-			output("%s%s", (value_only == 1) ? "" : array_beg, value_only == 1 ? "" : " ");
+			output("%s%s%s", wrap & wrap_arrays ? (wrap & wrap_dollar ? "$'" : "'") : "", (value_only == 1) ? "" : array_beg, value_only == 1 ? "" : " ");
 		}
 	}
 
@@ -536,7 +544,7 @@ static int array(int yy) {
 		if ( list_elements) {
 			ignore_comma = 0;
 		} else {
-			output("%s", (value_only == 1) ? "" : !get_element_no ? array_end : "");
+			output("%s%s", (value_only == 1) ? "" : !get_element_no ? array_end : "", wrap & wrap_arrays ? "'" : "");
 		}
 		in_array = 0;
 	}
@@ -592,7 +600,7 @@ static int value(int yy) {
 		}
 		case BEGIN_OBJECT: {
 			if (in_array && !open_quote++) {
-				output("%s{", wrap_quotes ? (dollar ? "$'" : "'") : "");
+				output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'") : "");
 			}
 			yy = object(yy);
 			break;
@@ -616,8 +624,10 @@ static int pair(int yy) {
 	if (yy == STRING) {
 		if (++level == 1) {
 			if (++key_count == get_key_no) {
-				quiet = quiet_arg;
-				no_messages = no_messages_arg;
+				if (!list_keys) { //mln...
+					quiet = quiet_arg;
+					no_messages = no_messages_arg;
+				}
 				if ( get_type ) {
 					show_type = 1;
 				}
@@ -636,7 +646,8 @@ static int pair(int yy) {
 						printf("%s%s", key(_yytext), assignment); // yes, printf() NOT output()
 					}
 				} else {
-					printf("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n"); // yes, printf() NOT output()
+					if ( !get_key_no || (get_key_no && (key_count == get_key_no ))) // mln...
+						printf("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n"); // yes, printf() NOT output()
 				}
 			} else if (!value_only && !open_quote) {
 				output("%s%s", key(_yytext), yylookahead() == COLON ? assignment : "");
@@ -687,7 +698,7 @@ static int keys(int yy) {
  */
 static int object(int yy) {
 	if (level == 1 && !in_array) {
-		output("%s{", wrap_quotes ? (dollar ? "$'" : "'"): "");
+		output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'"): "");
 		open_quote = 1;
 	}
 
@@ -699,10 +710,10 @@ static int object(int yy) {
 	
 	if (in_array){
 		if ( !--open_quote) {
-			output("%s%s", wrap_quotes ? "'" : "", yylookahead() == END_ARRAY ? " " : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
+			output("%s%s", wrap & wrap_objects ? "'" : "", yylookahead() == END_ARRAY ? " " : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
 		}
 	} else if (level == 1 ) {
-		output("%s ", wrap_quotes ? "'" : "");
+		output("%s ", wrap & wrap_objects ? "'" : "");
 		open_quote = 0;
 	}
 
@@ -778,12 +789,12 @@ static void help(void) {
 	printf("\t-=,  --assignment[=STRING]\tOutput STRING as assignment token instead of \":\" (default is \"=\")\n");
 	printf("\t-a   --array[=STRING]\t\tOutput characters for arrays instead of \"[,]\" (default is \"( )\")\n");
 	printf("\t-b,  --bash-variables\t\tOutput bash-friendly variable names, i.e., [_a-zA-Z][_a-zA-Z0-9]+ (substituting '_' for invalid characters)\n");
-	printf("\t-B,  --bash\t\t\tAlias for --wrap=$ --unquote=keys --escape=none --array-chars=\"( )\" --assignment=\"=\" --bash-variables\n");
+	printf("\t-B,  --bash\t\t\tAlias for --wrap=object$ --unquote=keys --escape=none --array-chars=\"( )\" --assignment=\"=\" --bash-variables\n");
 	printf("\t-e,  --escape[=WHAT]\t\tEscape single quotes in value strings; where WHAT is \"none\" \"keys\", \"values\" or \"all\" (default)\n");
 	printf("\t-p,  --prefix[=STRING]\t\tPrefix key name (Default is \"%s\" or \"%s\" if --type)\n", prefix_json, prefix_type);
 	printf("\t-u,  --unquote[=WHAT]\t\tStrip double quotes from WHAT: \"none\" \"keys\" \"values\" or \"all\" (default)\n");
 	printf("\t-v,  --values-only[=strip]\tOutput only the values of \"key:value\" pairs; optionally strip surrounding array characters\n");
-	printf("\t-w,  --wrap[=$|TOGGLE]\t\tWrap single quotes around \"complex\" pairs (optionaly prefix with a bash-friendly \"$\") or where TOGGLE is \"on\" or \"off\"\n");
+	printf("\t-w,  --wrap[=WHAT]\t\tWrap single quotes around base objects or arrays (optionaly prefix with a bash-friendly \"$\"); where WHAT is \"none\", \"objects[$]\" or \"arrays[$]\"\n"); 
 	printf("\nOutput Control\n");
 	printf("\t-c,  --count\t\t\tOutput the number of base keys (or array elements)\n");
 	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
@@ -896,10 +907,8 @@ int main(int argc, char *argv[]) {
 			case OPT_BASH: // -B, --bash
 				bash_vars = 1;
 
- 				wrap_quotes = 1;
-				dollar = 1;
+ 				wrap = wrap_objects | wrap_dollar;
 				escape = escape_none;
-				//unquote = unquote_keys;
 				unquote |= unquote_keys;
 				*array_beg = '('; 
 				*array_sep = ' ';; 
@@ -998,21 +1007,22 @@ int main(int argc, char *argv[]) {
 					value_only = 2;
 				break;
 			case OPT_WRAP: // -w, --wrap
-				wrap_quotes = 1;
-
 				if (optarg) {
-					if (strcmp(optarg, "$") == 0) {
-						dollar = 1;
-					} else if (strcasecmp(optarg, "on") == 0 || strcasecmp(optarg, "yes") == 0) {
-						dollar = 0;
-					} else if (strcasecmp(optarg, "off") == 0 || strcasecmp(optarg, "no") == 0) {
-						wrap_quotes = 0;
-						dollar     = 0;
+					if ((strcmp(optarg, "objects") == 0) || (strcmp(optarg, "object") == 0)) {
+						wrap |= wrap_objects;
+					} else if ((strcasecmp(optarg, "objects$") == 0) || (strcasecmp(optarg, "object$") == 0)) {
+						wrap |= wrap_objects | wrap_dollar;
+					} else if ((strcasecmp(optarg, "arrays") == 0) || (strcasecmp(optarg, "array") == 0)) {
+						wrap |= wrap_arrays;
+					} else if ((strcasecmp(optarg, "array$") == 0) || (strcasecmp(optarg, "arrays$") == 0)) {
+						wrap |= wrap_arrays | wrap_dollar;
+					} else if ((strcasecmp(optarg, "nothing") == 0) || (strcasecmp(optarg, "none") == 0 )) {
+						wrap = wrap_nothing;
 					} else {
-						err_msg("Optional --wrap argument values are \"$\", \"on\" or \"off\"\n");
+						err_msg("Optional --wrap argument values are \"objects[$]\", \"arrays[$]\" or \"nothing\"\n");
 					}
 				} else {
-					dollar = 0;
+					wrap = wrap_objects;
 				}
 
 				break;
@@ -1081,8 +1091,8 @@ int main(int argc, char *argv[]) {
 					err_msg("Conflicting --count and --list arguments");
 				} else if (get_key) {
 					err_msg("Conflicting --key=%s and --list arguments", get_key);
-				} else if (get_key_no) {
-					err_msg("Conflicting -%d and --list arguments", get_key_no);
+//				} else if (get_key_no) {
+//					err_msg("Conflicting -%d and --list arguments", get_key_no);
 				} else if (check != json_unknown) {
 					err_msg("Conflicting --json and --list arguments");
 				} 
@@ -1106,12 +1116,12 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (get_key_no) {
-		if (list_keys) {
-			err_msg("Conflicting --list and -%d arguments", get_key_no);
+		if (count_keys) {
+			err_msg("Conflicting --count and -%d arguments", get_key_no);
+//		} else if (list_keys) {
+//			err_msg("Conflicting --list and -%d arguments", get_key_no);
 		} else if (get_key) {
 			err_msg("Conflicting --key=%s and -%d arguments", get_key, get_key_no);
-		} else if (count_keys) {
-			err_msg("Conflicting --count and -%d arguments", get_key_no);
 		} else if (check != json_unknown) {
 			err_msg("Conflicting --json and -%d arguments", get_key_no);
 		}
@@ -1154,13 +1164,19 @@ int main(int argc, char *argv[]) {
 			if (get_key) {
 				no_messages = 0;
 				err_msg("Conflicting --key=%s with array object", get_key);
+			} else if ( get_key_no ) {
+				get_element_no = get_key_no;
+		 		get_key_no = 0;
+				quiet = no_messages = 1;
 			} else if (list_keys) {
 				quiet = quiet_arg;
 				no_messages = no_messages_arg;
 				list_elements = list_keys;
 				list_keys = 0;
-			} else if ( get_type ) {
+			} 
+			if ( get_type ) {
 				quiet = 1;
+			
 				
 				list_elements = 2;
 			}
@@ -1172,9 +1188,6 @@ int main(int argc, char *argv[]) {
 
 			count_elements = count_keys;
 			count_keys     = 0;
-
-			get_element_no = get_key_no;
-			get_key_no = 0;
 
 			yy = array(yy);
 	
