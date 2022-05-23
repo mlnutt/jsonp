@@ -21,7 +21,7 @@ const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
 #define PGM_NAME "jsonp"
 
 #define VER_MAJOR 1
-#define VER_MINOR 1
+#define VER_MINOR 2
 #define VER_DATE __DATE__
 
 #define VER_RELEASE "release"
@@ -209,7 +209,7 @@ static json_t check = json_unknown;
 static int check_type = 0;
 
 /*
- * Forward declarations 
+ * Begin Forward declarations 
  */
 
 static char *_escape_pattern(char *text, char pattern);
@@ -232,7 +232,24 @@ static int pair(int yy);
 static int keys(int yy);
 static int object(int yy);
 
+static void _free(void **ptr);
+static void init(void);
 static void cleanup(int rc);
+
+static void output(const char *fmt, ...);
+static void err_msg(const char *fmt, ...);
+static void wrn_msg(const char *fmt, ...);
+static void vbs_msg(const char *fmt, ...);
+
+static void version(void);
+static void little_help(void);
+static void help(void);
+
+static inline int c_todigit(const char c);
+
+/*
+ * End Forward Declarations
+ */
 
 static void output(const char *fmt, ...) {
 	va_list valist;
@@ -308,7 +325,7 @@ static char *_escape_pattern(char *text, char pattern) {
 		return text;
 	}
 
-	new_text = escaped_text = (char *) realloc( escaped_text, sizeof(char) * (strlen(text) + count + 1) );
+	new_text = escaped_text = (char *) realloc(escaped_text, sizeof(char) * (strlen(text) + count + 1));
 
 	for (ptr = text; location = strchr(ptr, pattern); ptr = location + 1) {
 		int skip = location - ptr;
@@ -328,6 +345,7 @@ static char *_escape_pattern(char *text, char pattern) {
  * Replace all ' characters with \'
  */
 static char *escape_string(char *text, escape_t what) {
+
 	return what ? _escape_pattern(text, '\'') : text;
 }
 
@@ -397,6 +415,7 @@ static char *bash_key(char *text) {
  * Remove surronding " characters from a JSON value.
  */
 static char *unquote_value(char *text) {
+
 	escape_string(text, escape & escape_values);
 
 	if ( !(unquote & unquote_values) || *text != '"') {
@@ -443,6 +462,7 @@ static int   lookahead      = 0;
 static char *lookahead_text = 0;
 
 static int yylookahead(void) {
+
 	lookahead = yylex();
 	
 	asprintf(&lookahead_text, "%s", yytext);
@@ -478,31 +498,32 @@ static int _yylex(void) {
  * Output the type of JSON item...
  */
 static void json_type(int type) {
+
 	if ( !quiet_arg ) {
 		switch (type) {
 			case STRING:
-				printf("STRING");
+				output("STRING");
 				break;
 			case null:
-				printf("null");
+				output("null");
 				break;
 			case true:
 			case false:
-				printf("BOOLEAN");
+				output("BOOLEAN");
 				break;
 			case NUMBER:
-				printf("NUMBER");
+				output("NUMBER");
 				break;
 			case BEGIN_OBJECT:
-				printf("OBJECT");
+				output("OBJECT");
 				break;
 			case BEGIN_ARRAY:
-				printf("ARRAY");
+				output("ARRAY");
 				break;
 			default:
 				return;
 		}
-		printf("%c", list_keys == 1 ? ' ' : '\n');
+		output("%c", list_keys == 1 ? ' ' : '\n');
 	}
 }
 
@@ -535,18 +556,24 @@ static int elements(int yy) {
 	if (enumerate && (level == 1)) {
 		static FILE *pp = NULL;
 
-		pp = NULL;
+		quiet = quiet_arg;
 
 		asprintf(&enum_cmd, enum_fmt, escape_quotes(element)); 
+
+		pp = NULL;
 
 		if ((pp = popen(enum_cmd, "r"))) { 
 			#define RESULT_SIZE 4096
 			static char result[RESULT_SIZE];
 
 			while (fgets(result, RESULT_SIZE, pp) != NULL)
-   				printf("%s", result);
+   				output("%s", result);
+   				//printf("%s", result);
 			pclose(pp);
 		}
+
+		quiet = 1;
+
 		*element = 0;
 	}
 
@@ -571,6 +598,7 @@ static int elements(int yy) {
  * Array [ ... ]...
  */
 static int array(int yy) {
+
 	if (level == 1) {
 		in_array = 1;
 		if ( list_elements || enumerate ) {
@@ -616,12 +644,14 @@ static int value(int yy) {
 	if (get_element_no && get_type) {
 		if (element_count == get_element_no) {
 			if (show_type) {
+				quiet = quiet_arg;
 				json_type(yy);
 				show_type = 0;
 			}
 			quiet=1;
 		}
 	} else if ( show_type || (get_type && got_key) ) {
+		quiet = quiet_arg;
 		json_type(yy);
 
 		quiet=1;
@@ -670,6 +700,7 @@ static int value(int yy) {
  * 	STRING:value
  */
 static int pair(int yy) {
+
 	if (yy == STRING) {
 		if (++level == 1) {
 			if (++key_count == get_key_no) {
@@ -689,14 +720,19 @@ static int pair(int yy) {
 			} 
 
 			if (list_keys) {
-				if ( get_type && ! get_key) {
+				if ( get_type && !get_key ) {
 					show_type=1;
-					if ( !value_only && !quiet_arg ) {
-						printf("%s%s", key(_yytext), assignment); // yes, printf() NOT output()
+					if (!value_only) {
+						quiet = quiet_arg;
+						output("%s%s", key(_yytext), assignment); // mln...yes, printf() NOT output()
+						quiet = 1;
 					}
 				} else {
-					if ( !get_key_no || (get_key_no && (key_count == get_key_no )))
-						printf("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n"); // yes, printf() NOT output()
+					if ( !get_key_no || (get_key_no && (key_count == get_key_no ))) {
+						quiet = quiet_arg;
+						output("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n"); // mln...yes, printf() NOT output()
+						quiet = 1;
+					}
 				}
 			} else if (!value_only && !open_quote) {
 				output("%s%s", key(_yytext), yylookahead() == COLON ? assignment : "");
@@ -746,6 +782,7 @@ static int keys(int yy) {
  * 	{ keys... }
  */
 static int object(int yy) {
+
 	if (level == 1 && !in_array) {
 		output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'"): "");
 		open_quote = 1;
@@ -773,6 +810,7 @@ static int object(int yy) {
  * Free an allocated memory block and reinstantiate the ptr to zero
  */
 static void _free(void **ptr) {
+
 	if (*ptr) {
 		free(*ptr);
 		*ptr = 0;
@@ -829,12 +867,14 @@ static void version(void) {
 }
 
 static void little_help(void) {
+
 	printf("\n");
 	printf("Usage: %s [OPTION]...\n", PGM_NAME);
 	printf("Try `%s --help' for more information.\n", PGM_NAME);
 }
 
 static void help(void) {
+
 	version();
 
 	printf("\n");
@@ -861,8 +901,8 @@ static void help(void) {
 	printf("\t-o,  --output=OUTFILE\t\tOutput to OUTFILE instead of stdout\n");
 	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
 	printf("\nMiscellaneous:\n");
-	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", enum_fmt);
-	//printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"printf \\\"%%s\\n\\\"\")\n");
+	//printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", enum_fmt);
+	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"printf \\\"%%s\\n\\\"\")\n");
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
@@ -872,7 +912,8 @@ static void help(void) {
 	cleanup(0);
 }
 
-void init(void) {
+static void init(void) {
+
 	asprintf(&array_beg, "%c", '[');
 	asprintf(&array_sep, "%c", ',');
 	asprintf(&array_end, "%c", ']');
@@ -1046,6 +1087,8 @@ int main(int argc, char *argv[]) {
 					err_msg("Conflicting --count and --type arguments");
 				} else if ( quiet_arg && verbose ) {
 					err_msg("Conflicting --quiet and --verbose arguments");
+				} else if (list_keys) {
+					err_msg("Conflicting --list and --type arguments");
 				}
 
 				if ( prefix && !custom_prefix ) {
@@ -1160,6 +1203,8 @@ int main(int argc, char *argv[]) {
 //					err_msg("Conflicting -%d and --list arguments", get_key_no);
 				} else if (check != json_unknown) {
 					err_msg("Conflicting --json and --list arguments");
+				} else if (get_type) {
+					err_msg("Conflicting --type and --list arguments");
 				} 
 
 				quiet = 1;
@@ -1175,7 +1220,7 @@ int main(int argc, char *argv[]) {
 
 	no_messages = no_messages_arg;
 
-	if ( check && get_type ) {
+	if (check && get_type) {
 		check_type = 1;
 		get_type = 0;
 	}
@@ -1277,8 +1322,9 @@ int main(int argc, char *argv[]) {
 		}
 	
 		if (check) {
-			if (check_type && !quiet_arg ) {
-				printf("%s", json == json_object ? "OBJECT" : "ARRAY");
+			if (check_type) {
+				quiet = quiet_arg;
+				output("%s", json == json_object ? "OBJECT" : "ARRAY");
 			}
 
 			if ((check == json_array) && (json != json_array)) {
