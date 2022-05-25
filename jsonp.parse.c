@@ -186,6 +186,7 @@ static char *assignment     = 0;
 static char *key_name       = 0;
 static char *unquoted_text  = 0;
 static char *escaped_text   = 0;
+static char *escaped_quotes = 0;
 static char *bash_key_text  = 0;
 static char *string         = 0;
 static char *array_beg      = 0;
@@ -207,6 +208,10 @@ static json_t json  = json_unknown;
 static json_t check = json_unknown;
 
 static int check_type = 0;
+
+static int   lookahead      = 0;
+static char *lookahead_text = 0;
+static char *_yytext        = 0;
 
 /*
  * Begin Forward declarations 
@@ -305,6 +310,38 @@ static void vbs_msg(const char *fmt, ...) {
 	}
 }
 
+static inline int is_special(char c, char *s) {
+	return strchr(s, c) != NULL;
+}
+
+static char *escape_quotes(char *text) {
+	char *ptr;
+	char *new_text;
+	int   count = 0;
+	char *specials = "\\\"";
+
+	for (ptr = text; *ptr; ++ptr) {
+		if (is_special(*ptr, specials))
+			++count;
+	}	
+
+	if (!count) {
+		return text;
+	}
+
+	new_text = escaped_quotes = (char *) realloc(escaped_quotes, sizeof(char) * (strlen(text) + count + 1));
+
+	for (ptr = text; *ptr; ++ptr) {
+		
+		if (is_special(*ptr, specials)) {
+			*new_text++ = '\\';
+		}
+		*new_text++ = *ptr;
+	}
+	*new_text = 0;
+
+	return escaped_quotes;
+}
 /*
  * Replace all "pattern" chars with an escaped "pattern" char
  */
@@ -350,14 +387,6 @@ static char *escape_string(char *text, escape_t what) {
 }
 
 /*
- * Replace all " characters with \"
- */
-static char *escape_quotes(char *text) {
-
-	return _escape_pattern(text, '"');
-}
-
-/*
  * Replace all invalid bash variable characters with an _
  */
 static char *bash_key(char *text) {
@@ -392,7 +421,7 @@ static char *bash_key(char *text) {
 		}
 	}
 
-	for (++ptr; *ptr; ++ptr ) {
+	for (++ptr; *ptr; ++ptr) {
 		if (!is_bash_var_char(*ptr)) {
 			++changes;
 			*ptr = replacement;
@@ -418,7 +447,7 @@ static char *unquote_value(char *text) {
 
 	escape_string(text, escape & escape_values);
 
-	if ( !(unquote & unquote_values) || *text != '"') {
+	if (!(unquote & unquote_values) || *text != '"') {
 		return text;
 	}
 
@@ -458,9 +487,6 @@ static char *key(char *text) {
 /*
  * Look Ahead at the next token to be returned by lex.
  */
-static int   lookahead      = 0;
-static char *lookahead_text = 0;
-
 static int yylookahead(void) {
 
 	lookahead = yylex();
@@ -473,8 +499,6 @@ static int yylookahead(void) {
 /*
  * yylex() wrapper to return a Look Ahead, if needed, and to print out the token's corresponding string if necessary.
  */
-static char *_yytext = 0;
-
 static int _yylex(void) {
 	int yy;
 
@@ -499,7 +523,7 @@ static int _yylex(void) {
  */
 static void json_type(int type) {
 
-	if ( !quiet_arg ) {
+	if (!quiet_arg) {
 		switch (type) {
 			case STRING:
 				output("STRING");
@@ -543,7 +567,7 @@ static int elements(int yy) {
 
 		if (get_element_no || count_elements) {
 			if (++element_count == get_element_no) {
-				if ( !list_elements ) {
+				if (!list_elements) {
 					quiet = quiet_arg;
 					no_messages = no_messages_arg;
 				}
@@ -568,7 +592,6 @@ static int elements(int yy) {
 
 			while (fgets(result, RESULT_SIZE, pp) != NULL)
    				output("%s", result);
-   				//printf("%s", result);
 			pclose(pp);
 		}
 
@@ -601,7 +624,7 @@ static int array(int yy) {
 
 	if (level == 1) {
 		in_array = 1;
-		if ( list_elements || enumerate ) {
+		if (list_elements || enumerate) {
 			if (get_type) {
 				show_type = 1;
 			}
@@ -650,14 +673,14 @@ static int value(int yy) {
 			}
 			quiet=1;
 		}
-	} else if ( show_type || (get_type && got_key) ) {
+	} else if (show_type || (get_type && got_key)) {
 		quiet = quiet_arg;
 		json_type(yy);
 
 		quiet=1;
 		show_type=0;
 
-		if ( get_type && got_key ) {
+		if (get_type && got_key) {
 			get_type=0;
 		}
 	}
@@ -708,7 +731,7 @@ static int pair(int yy) {
 					quiet = quiet_arg;
 					no_messages = no_messages_arg;
 				}
-				if ( get_type ) {
+				if (get_type) {
 					show_type = 1;
 				}
 			} else if (get_key) {
@@ -720,17 +743,17 @@ static int pair(int yy) {
 			} 
 
 			if (list_keys) {
-				if ( get_type && !get_key ) {
+				if (get_type && !get_key) {
 					show_type=1;
 					if (!value_only) {
 						quiet = quiet_arg;
-						output("%s%s", key(_yytext), assignment); // mln...yes, printf() NOT output()
+						output("%s%s", key(_yytext), assignment);
 						quiet = 1;
 					}
 				} else {
-					if ( !get_key_no || (get_key_no && (key_count == get_key_no ))) {
+					if (!get_key_no || (get_key_no && (key_count == get_key_no))) {
 						quiet = quiet_arg;
-						output("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n"); // mln...yes, printf() NOT output()
+						output("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n");
 						quiet = 1;
 					}
 				}
@@ -795,10 +818,10 @@ static int object(int yy) {
 	}
 	
 	if (in_array){
-		if ( !--open_quote) {
+		if (!--open_quote) {
 			output("%s%s", wrap & wrap_objects ? "'" : "", yylookahead() == END_ARRAY ? " " : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
 		}
-	} else if (level == 1 ) {
+	} else if (level == 1) {
 		output("%s ", wrap & wrap_objects ? "'" : "");
 		open_quote = 0;
 	}
@@ -833,6 +856,8 @@ static void cleanup(int rc) {
 	_free((void **) &key_name);
 
 	_free((void **) &escaped_text);
+
+	_free((void **) &escaped_quotes);
 
 	_free((void **) &get_key);
 
@@ -901,8 +926,7 @@ static void help(void) {
 	printf("\t-o,  --output=OUTFILE\t\tOutput to OUTFILE instead of stdout\n");
 	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
 	printf("\nMiscellaneous:\n");
-	//printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", enum_fmt);
-	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"printf \\\"%%s\\n\\\"\")\n");
+	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", escape_quotes(enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
@@ -920,14 +944,15 @@ static void init(void) {
 
 	asprintf(&assignment, "%c", ':');
 
-	asprintf(&enum_fmt, "printf \"%%s\\\\n\""); 
+	asprintf(&enum_fmt, "echo \"%%s\""); 
 }
 
 static inline int c_todigit(const char c) {
 	int n = -1;
 
-	if (isdigit(c))
+	if (isdigit(c)) {
 		n = c - '0';
+	}
 
 	return n;
 }
@@ -943,7 +968,7 @@ int main(int argc, char *argv[]) {
 
 	optind = 0;
 
-	while ( ((c = getopt_long(argc, argv, OPTIONS, long_options, &option_index)) != -1) ) {
+	while ( ((c = getopt_long(argc, argv, OPTIONS, long_options, &option_index)) != -1)) {
 		static int new_number = 0; 
 		int        number;
 
@@ -1029,7 +1054,7 @@ int main(int argc, char *argv[]) {
 				if (optarg) {
 					asprintf(&prefix, "%s", optarg);
 					custom_prefix = 1;
-				} else if ( ! custom_prefix ) {
+				} else if (!custom_prefix) {
 					asprintf(&prefix, get_type ? prefix_type : prefix_json);
 				}
 
@@ -1085,13 +1110,13 @@ int main(int argc, char *argv[]) {
 			case OPT_TYPE: // -t, --type (return the type of key)
 				if (count_keys) {
 					err_msg("Conflicting --count and --type arguments");
-				} else if ( quiet_arg && verbose ) {
+				} else if (quiet_arg && verbose) {
 					err_msg("Conflicting --quiet and --verbose arguments");
 				} else if (list_keys) {
 					err_msg("Conflicting --list and --type arguments");
 				}
 
-				if ( prefix && !custom_prefix ) {
+				if (prefix && !custom_prefix) {
 					asprintf(&prefix, prefix_type );
 				}
 
@@ -1118,7 +1143,7 @@ int main(int argc, char *argv[]) {
 						wrap |= wrap_arrays;
 					} else if ((strcasecmp(optarg, "array$") == 0) || (strcasecmp(optarg, "arrays$") == 0)) {
 						wrap |= wrap_arrays | wrap_dollar;
-					} else if ((strcasecmp(optarg, "nothing") == 0) || (strcasecmp(optarg, "none") == 0 )) {
+					} else if ((strcasecmp(optarg, "nothing") == 0) || (strcasecmp(optarg, "none") == 0)) {
 						wrap = wrap_none;
 					} else {
 						err_msg("Optional --wrap argument values are \"objects[$]\", \"arrays[$]\" or \"nothing\"\n");
@@ -1199,8 +1224,6 @@ int main(int argc, char *argv[]) {
 					err_msg("Conflicting --count and --list arguments");
 				} else if (get_key) {
 					err_msg("Conflicting --key=%s and --list arguments", get_key);
-//				} else if (get_key_no) {
-//					err_msg("Conflicting -%d and --list arguments", get_key_no);
 				} else if (check != json_unknown) {
 					err_msg("Conflicting --json and --list arguments");
 				} else if (get_type) {
@@ -1228,8 +1251,6 @@ int main(int argc, char *argv[]) {
 	if (get_key_no) {
 		if (count_keys) {
 			err_msg("Conflicting --count and -%d arguments", get_key_no);
-//		} else if (list_keys) {
-//			err_msg("Conflicting --list and -%d arguments", get_key_no);
 		} else if (get_key) {
 			err_msg("Conflicting --key=%s and -%d arguments", get_key, get_key_no);
 		} else if (check != json_unknown) {
@@ -1242,7 +1263,7 @@ int main(int argc, char *argv[]) {
 		static int got_in = 0;
 			
 		if (!got_in++ && !string) {
-			if ( (yyin = fopen(argv[arg], "r")) == 0 ) {
+			if ((yyin = fopen(argv[arg], "r")) == 0) {
 				no_messages = 0;
 				err_msg("Could not open file \"%s\" for input", argv[arg]);
 			}
@@ -1265,7 +1286,7 @@ int main(int argc, char *argv[]) {
 
 			if (get_key) {
 				no_messages = 1;
-			} else if ( get_type && !list_keys && !get_key_no && !check ) {
+			} else if (get_type && !list_keys && !get_key_no && !check) {
 				list_keys=2;
 			}
 
@@ -1289,7 +1310,7 @@ int main(int argc, char *argv[]) {
 				list_elements = list_keys;
 				list_keys = 0;
 			} 
-			if ( get_type ) {
+			if (get_type) {
 				quiet = 1;
 				
 				list_elements = 2;
