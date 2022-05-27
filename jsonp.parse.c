@@ -52,7 +52,6 @@ value
 	null
 */
 
-//#define OPTIONS "0123456789=::a::bBce::E::hj::k:l::o:p::u::qsS:tw::v::VX:"
 #define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tw::v::V"
 
 typedef enum {
@@ -77,7 +76,6 @@ typedef enum {
 	OPT_VALUES_ONLY = 'v',
  	OPT_VERSION	= 'V',
 	OPT_WRAP        = 'w',
-	OPT_SPECIALS    = 'X',
 
 	OPT_VERBOSE     = 200,
 } option_t;
@@ -115,7 +113,7 @@ static struct option long_options[] = {
 	{"verbose",		no_argument,		0,		OPT_VERBOSE },
 	{"version",		no_argument,		0,		OPT_VERSION },
 
-	{"escape",		optional_argument,	0,		OPT_ESCAPE },
+	{"escape",		required_argument,	0,		OPT_ESCAPE },
 	{0,			0,			0,		0 },
 };
 
@@ -133,7 +131,7 @@ typedef enum {
 	wrap_dollar  = 0x01,
 	wrap_objects = 0x02,
 	wrap_arrays  = 0x04,
-	wrap_all     = 0x06,
+	wrap_all     = wrap_objects | wrap_arrays,
 } wrap_t;
 
 static wrap_t wrap   = wrap_none;
@@ -189,7 +187,7 @@ static char *enum_fmt       = 0;
 static char *enum_cmd       = 0;
 static char *element        = 0;
 static char *output_buf     = 0;
-static char *specials       = 0;
+static char *esc_chars      = 0;
 
 typedef enum {
 	json_unknown,
@@ -314,7 +312,7 @@ static char *escape_chars(char *text) {
 	int   count = 0;
 
 	for (ptr = text; *ptr; ++ptr) {
-		if (is_special(*ptr, specials))
+		if (is_special(*ptr, esc_chars))
 			++count;
 	}	
 
@@ -326,8 +324,8 @@ static char *escape_chars(char *text) {
 
 	for (ptr = text; *ptr; ++ptr) {
 		
-		if (is_special(*ptr, specials)) {
-			*new_text++ = *specials;
+		if (is_special(*ptr, esc_chars)) {
+			*new_text++ = *esc_chars;
 		}
 		*new_text++ = *ptr;
 	}
@@ -841,6 +839,8 @@ static int object(int yy) {
 		} else if (!in_array) {
 			output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'"): "");
 			open_quote = 1;
+		} else {
+			output("{");
 		}
 	} else if (level != 0){
 		output("{");
@@ -896,7 +896,7 @@ static void cleanup(int rc) {
 
 	_free((void **) &escaped_text);
 
-	_free((void **) &specials);
+	_free((void **) &esc_chars);
 
 	_free((void **) &get_key);
 
@@ -964,7 +964,7 @@ static void help(void) {
 	printf("\t-o,  --output=OUTFILE\t\tOutput to OUTFILE instead of stdout\n");
 	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
 	printf("\nMiscellaneous:\n");
-	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default \"%s\")\n", escape_chars(specials));
+	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default \"%s\")\n", escape_chars(esc_chars));
 	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", escape_chars(enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
@@ -983,7 +983,7 @@ static void init(void) {
 
 	asprintf(&assignment, "%c", ':');
 
-	asprintf(&specials, "\\\""); // first char is the "escape char" which also will be escaped...
+	asprintf(&esc_chars, "\\\""); // first char is the "escape char" which also will be escaped...
 
 	asprintf(&enum_fmt, "echo \"%%s\""); 
 }
@@ -1257,8 +1257,8 @@ int main(int argc, char *argv[]) {
 				quiet = 1;
 				break;
 
-			case OPT_ESCAPE: // -X, --specials
-				asprintf(&specials, "%s", optarg);
+			case OPT_ESCAPE: // -e, --escape
+				asprintf(&esc_chars, "%s", optarg);
 				break;
 			case 0: 
 			case '?':
