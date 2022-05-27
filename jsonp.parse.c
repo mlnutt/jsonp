@@ -52,7 +52,8 @@ value
 	null
 */
 
-#define OPTIONS "0123456789=::a::bBce::E::hj::k:l::o:p::u::qsS:tw::v::V"
+//#define OPTIONS "0123456789=::a::bBce::E::hj::k:l::o:p::u::qsS:tw::v::VX:"
+#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tw::v::V"
 
 typedef enum {
 	OPT_ASSIGNMENT  = '=',
@@ -76,6 +77,7 @@ typedef enum {
 	OPT_VALUES_ONLY = 'v',
  	OPT_VERSION	= 'V',
 	OPT_WRAP        = 'w',
+	OPT_SPECIALS    = 'X',
 
 	OPT_VERBOSE     = 200,
 } option_t;
@@ -86,7 +88,6 @@ static struct option long_options[] = {
 	{"bash-variables",	no_argument,		0,		OPT_BASH_VARS },
 	{"bash-vars",		no_argument,		0,		OPT_BASH_VARS },
 	{"bash",	        no_argument,		0,		OPT_BASH },
-	{"escape",		optional_argument,	0,		OPT_ESCAPE },
 	{"prefix",		optional_argument,	0,		OPT_PREFIX },
 	{"unquote",		optional_argument,	0,		OPT_UNQUOTE },
 	{"values-only",		optional_argument,	0,		OPT_VALUES_ONLY },
@@ -113,18 +114,10 @@ static struct option long_options[] = {
 	{"no-messages",		no_argument,		0,		OPT_NO_MESSAGES },
 	{"verbose",		no_argument,		0,		OPT_VERBOSE },
 	{"version",		no_argument,		0,		OPT_VERSION },
+
+	{"escape",		optional_argument,	0,		OPT_ESCAPE },
 	{0,			0,			0,		0 },
 };
-
-typedef enum {
-	escape_none   = 0x00,
-	escape_keys   = 0x01,
-	escape_values = 0x02,
-	escape_all    = escape_keys | escape_values,
-
-} escape_t;
-
-static escape_t  escape = escape_none;
 
 typedef enum {
 	unquote_none   = 0x00,
@@ -140,12 +133,14 @@ typedef enum {
 	wrap_dollar  = 0x01,
 	wrap_objects = 0x02,
 	wrap_arrays  = 0x04,
+	wrap_all     = 0x06,
 } wrap_t;
 
 static wrap_t wrap   = wrap_none;
 
 static int bash_vars   = 0;
 static int value_only  = 0;
+static int strip_array = 0;
 
 static int count_elements = 0;
 static int element_count  = 0;
@@ -168,7 +163,6 @@ static int verbose         = 0;
 static int level        = 0;
 static int in_array     = 0;
 static int open_quote   = 0;
-static int ignore_comma = 0;
 static int show_type    = 0;
 
 static int enumerate = 0;
@@ -186,7 +180,6 @@ static char *assignment     = 0;
 static char *key_name       = 0;
 static char *unquoted_text  = 0;
 static char *escaped_text   = 0;
-static char *escaped_quotes = 0;
 static char *bash_key_text  = 0;
 static char *string         = 0;
 static char *array_beg      = 0;
@@ -196,6 +189,7 @@ static char *enum_fmt       = 0;
 static char *enum_cmd       = 0;
 static char *element        = 0;
 static char *output_buf     = 0;
+static char *specials       = 0;
 
 typedef enum {
 	json_unknown,
@@ -218,8 +212,8 @@ static char *_yytext        = 0;
  */
 
 static char *_escape_pattern(char *text, char pattern);
-static char *escape_string(char *text, escape_t what);
 static char *escape_quotes(char *text);
+static char *escape_chars(char *text);
 
 static char *bash_key(char *text);
 static char *unquote_value(char *text);
@@ -314,11 +308,10 @@ static inline int is_special(char c, char *s) {
 	return strchr(s, c) != NULL;
 }
 
-static char *escape_quotes(char *text) {
+static char *escape_chars(char *text) {
 	char *ptr;
 	char *new_text;
 	int   count = 0;
-	char *specials = "\\\"";
 
 	for (ptr = text; *ptr; ++ptr) {
 		if (is_special(*ptr, specials))
@@ -329,18 +322,18 @@ static char *escape_quotes(char *text) {
 		return text;
 	}
 
-	new_text = escaped_quotes = (char *) realloc(escaped_quotes, sizeof(char) * (strlen(text) + count + 1));
+	new_text = escaped_text = (char *) realloc(escaped_text, sizeof(char) * (strlen(text) + count + 1));
 
 	for (ptr = text; *ptr; ++ptr) {
 		
 		if (is_special(*ptr, specials)) {
-			*new_text++ = '\\';
+			*new_text++ = *specials;
 		}
 		*new_text++ = *ptr;
 	}
 	*new_text = 0;
 
-	return escaped_quotes;
+	return escaped_text;
 }
 /*
  * Replace all "pattern" chars with an escaped "pattern" char
@@ -381,9 +374,9 @@ static char *_escape_pattern(char *text, char pattern) {
 /*
  * Replace all ' characters with \'
  */
-static char *escape_string(char *text, escape_t what) {
+static char *escape_quotes(char *text) {
 
-	return what ? _escape_pattern(text, '\'') : text;
+	return _escape_pattern(text, '\'');
 }
 
 /*
@@ -445,8 +438,6 @@ static char *bash_key(char *text) {
  */
 static char *unquote_value(char *text) {
 
-	escape_string(text, escape & escape_values);
-
 	if (!(unquote & unquote_values) || *text != '"') {
 		return text;
 	}
@@ -461,15 +452,13 @@ static char *unquote_value(char *text) {
 }
 
 /*
- * Possibly turn the key into a bash valid variabl or escape the ' in the key and possibly prepend the key with a prefix...
+ * Possibly turn the key into a bash valid variabe or escape the ' in the key and possibly prepend the key with a prefix...
  */
 static char *key(char *text) {
 
 	if (bash_vars) {
 		text = bash_key(text);
-	} else {
-		text = escape_string(text, escape & escape_keys);
-	}
+	} 
 
 	if (unquote & unquote_keys) {
 		asprintf(&key_name, "%s%s", prefix ? prefix : "", text + ((unquote & unquote_keys) && (*text == '"') ? 1 : 0));
@@ -510,11 +499,6 @@ static int _yylex(void) {
 		yy = yylex();
 		asprintf(&_yytext, "%s", yytext);
 	}
-
-	if (open_quote) {
-		output(escape_string(_yytext, (wrap & wrap_objects) || (escape & escape_values)));
-	}
-
 	return yy;
 }
 
@@ -564,7 +548,6 @@ static int elements(int yy) {
 		if (get_type && list_elements) {
 			show_type = 1;
 		}
-
 		if (get_element_no || count_elements) {
 			if (++element_count == get_element_no) {
 				if (!list_elements) {
@@ -577,38 +560,46 @@ static int elements(int yy) {
 
 	yy = value(yy);
 
-	if (enumerate && (level == 1)) {
-		static FILE *pp = NULL;
+	if (level == 1) {
+		if (enumerate) {
+			static FILE *pp = NULL;
 
-		quiet = quiet_arg;
+			quiet = quiet_arg;
 
-		asprintf(&enum_cmd, enum_fmt, escape_quotes(element)); 
+			asprintf(&enum_cmd, enum_fmt, escape_chars(element)); 
 
-		pp = NULL;
+			if ((pp = popen(enum_cmd, "r"))) { 
+				#define RESULT_SIZE 4096
+				static char result[RESULT_SIZE];
 
-		if ((pp = popen(enum_cmd, "r"))) { 
-			#define RESULT_SIZE 4096
-			static char result[RESULT_SIZE];
+				while (fgets(result, RESULT_SIZE, pp) != NULL)
+   					output("%s", result);
+				pclose(pp);
+			}
 
-			while (fgets(result, RESULT_SIZE, pp) != NULL)
-   				output("%s", result);
-			pclose(pp);
+			*element = 0;
+
+			quiet = 1;
+		} else if (get_element_no && (element_count == get_element_no)) {
+			quiet = no_messages = 1;
 		}
-
-		quiet = 1;
-
-		*element = 0;
-	}
-
-	if ((level == 1) && (get_element_no && (element_count == get_element_no))) {
-		quiet = no_messages = 1;
 	}
 
 	yy = _yylex();
 
 	if (yy == COMMA) {
-		if (ignore_comma && (level == 1)) {
-			output("%c", enumerate ? 0 : list_elements == 1 ? ' ' : '\n');
+		if (level == 1) {
+			if (!enumerate) {
+				if ( list_elements == 1 ) {
+					output(" ");
+				} else if ( list_elements == 2 ) {
+					output("\n");
+				} else {
+					output(array_sep);
+				}
+			}
+		} else {
+			output(",");
 		}
 
 		yy = elements(yy = _yylex());
@@ -622,16 +613,39 @@ static int elements(int yy) {
  */
 static int array(int yy) {
 
-	if (level == 1) {
+	if (++level == 1) {
 		in_array = 1;
 		if (list_elements || enumerate) {
 			if (get_type) {
 				show_type = 1;
 			}
-			ignore_comma = 1;
-		} else {
-			output("%s%s%s", wrap & wrap_arrays ? (wrap & wrap_dollar ? "$'" : "'") : "", (value_only == 1) ? "" : array_beg, value_only == 1 ? "" : " ");
+		} 
+
+		if ( !list_elements && !enumerate ) {
+			if (!strip_array) {
+				if ( wrap & wrap_arrays ) {
+					if (wrap & wrap_objects) { // If we're wrapping the bas array we don't wrap an object elements...
+						wrap -= wrap_objects;
+					}
+
+					if ( wrap & wrap_dollar ) {
+						output("$");
+					}
+					output("'");
+				}
+				output("%s ", array_beg);
+			}
 		}
+	} else {
+		if ( level == 2 && (strip_array || list_elements || enumerate )) {
+			if ( wrap & wrap_arrays ) {
+				if ( wrap & wrap_dollar ) {
+					output("$");
+				}
+				output("'");
+			}
+		}
+		output("[");
 	}
 
 	yy = _yylex();
@@ -640,13 +654,29 @@ static int array(int yy) {
 		yy = elements(yy);
 	}
 	
-	if (level == 1 && yy == END_ARRAY) {
-		if (list_elements) {
-			ignore_comma = 0;
+	if (yy == END_ARRAY) {
+		if (level == 1) {
+			if (!list_elements && !enumerate) {
+				if (!strip_array) {
+					output(" %s", array_end);
+				
+					if (wrap & wrap_arrays) {
+						output("'");
+					}
+				}
+			}
 		} else {
-			output("%s%s", (value_only == 1) ? "" : !get_element_no ? array_end : "", wrap & wrap_arrays ? "'" : "");
+			output("]");
+			if ((level == 2) && (strip_array || list_elements || enumerate)) {
+				if (wrap & wrap_arrays) {
+					output("'");
+				}
+			}
 		}
-		in_array = 0;
+
+		if (level-- == 1) {
+			in_array = 0;
+		}
 	}
 
 	return yy;
@@ -691,19 +721,10 @@ static int value(int yy) {
 		case false:
 		case null:
 		case NUMBER: {
-			if (in_array) {
-				if (!open_quote) {
-					output("%s%s", unquote_value(_yytext), yylookahead() == END_ARRAY ? ( enumerate ? "" : " ") : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
-				}
-			} else if (level == 1) {
-				output("%s", unquote_value(_yytext));
-			}
+			output("%s", unquote_value(_yytext));
 			break;
 		}
 		case BEGIN_OBJECT: {
-			if (in_array && !open_quote++) {
-				output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'") : "");
-			}
 			yy = object(yy);
 			break;
 		}
@@ -760,6 +781,11 @@ static int pair(int yy) {
 			} else if (!value_only && !open_quote) {
 				output("%s%s", key(_yytext), yylookahead() == COLON ? assignment : "");
 			}
+		} else {
+			output("%s", _yytext);
+			if ( yylookahead() == COLON ) {
+				output(":");
+			}
 		}
 
 		yy = _yylex();
@@ -794,6 +820,9 @@ static int keys(int yy) {
 	yy = _yylex();
 
 	if (yy == COMMA) {
+		if ( level != 0) {
+			output(",");
+		}
 		yy = keys(yy = _yylex());
 	}
 
@@ -806,9 +835,15 @@ static int keys(int yy) {
  */
 static int object(int yy) {
 
-	if (level == 1 && !in_array) {
-		output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'"): "");
-		open_quote = 1;
+	if (level == 1) {
+ 		if (in_array && !open_quote++) {
+			output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'") : "");
+		} else if (!in_array) {
+			output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'"): "");
+			open_quote = 1;
+		}
+	} else if (level != 0){
+		output("{");
 	}
 
 	yy = _yylex();
@@ -817,14 +852,18 @@ static int object(int yy) {
 		yy = keys(yy);
 	}
 	
+	if (level != 0) {
+		output("}");
+	}
+
 	if (in_array){
 		if (!--open_quote) {
-			output("%s%s", wrap & wrap_objects ? "'" : "", yylookahead() == END_ARRAY ? " " : ((value_only == 1) ? " " : !get_element_no ? (ignore_comma ? "" : array_sep) : ""));
+			output("%s", wrap & wrap_objects ? "'" : "");
 		}
 	} else if (level == 1) {
 		output("%s ", wrap & wrap_objects ? "'" : "");
 		open_quote = 0;
-	}
+	} 
 
 	return yy;
 }
@@ -857,7 +896,7 @@ static void cleanup(int rc) {
 
 	_free((void **) &escaped_text);
 
-	_free((void **) &escaped_quotes);
+	_free((void **) &specials);
 
 	_free((void **) &get_key);
 
@@ -909,12 +948,11 @@ static void help(void) {
 	printf("\t-=,  --assignment[=STRING]\tOutput STRING as assignment token instead of \":\" (default is \"=\")\n");
 	printf("\t-a   --array[=STRING]\t\tOutput characters for arrays instead of \"[,]\" (default is \"( )\")\n");
 	printf("\t-b,  --bash-variables\t\tOutput bash-friendly variable names, i.e., [_a-zA-Z][_a-zA-Z0-9]+ (substituting '_' for invalid characters)\n");
-	printf("\t-B,  --bash\t\t\tAlias for --wrap=object$ --unquote=keys --escape=none --array-chars=\"( )\" --assignment=\"=\" --bash-variables\n");
-	printf("\t-e,  --escape[=WHAT]\t\tEscape single quotes in value strings; where WHAT is \"none\" \"keys\", \"values\" or \"all\" (default)\n");
+	printf("\t-B,  --bash\t\t\tAlias for --wrap=object$ --unquote=keys --array-chars=\"( )\" --assignment=\"=\" --bash-variables\n");
 	printf("\t-p,  --prefix[=STRING]\t\tPrefix key name (Default is \"%s\" or \"%s\" if --type)\n", prefix_json, prefix_type);
 	printf("\t-u,  --unquote[=WHAT]\t\tStrip double quotes from WHAT: \"none\" \"keys\" \"values\" or \"all\" (default)\n");
 	printf("\t-v,  --values-only[=strip]\tOutput only the values of \"key:value\" pairs; optionally strip surrounding array characters\n");
-	printf("\t-w,  --wrap[=WHAT]\t\tWrap single quotes around base objects or arrays (optionaly prefix with a bash-friendly \"$\"); where WHAT is \"none\", \"objects[$]\" or \"arrays[$]\"\n"); 
+	printf("\t-w,  --wrap[=WHAT]\t\tWrap single quotes around base objects or arrays (optionaly prefix with a bash-friendly \"$\"); where WHAT is \"all[$]\", \"objects[$]\" or \"arrays[$]\"\n"); 
 	printf("\nOutput Control\n");
 	printf("\t-c,  --count\t\t\tOutput the number of base keys (or array elements)\n");
 	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
@@ -926,7 +964,8 @@ static void help(void) {
 	printf("\t-o,  --output=OUTFILE\t\tOutput to OUTFILE instead of stdout\n");
 	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
 	printf("\nMiscellaneous:\n");
-	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", escape_quotes(enum_fmt));
+	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default \"%s\")\n", escape_chars(specials));
+	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", escape_chars(enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
@@ -943,6 +982,8 @@ static void init(void) {
 	asprintf(&array_end, "%c", ']');
 
 	asprintf(&assignment, "%c", ':');
+
+	asprintf(&specials, "\\\""); // first char is the "escape char" which also will be escaped...
 
 	asprintf(&enum_fmt, "echo \"%%s\""); 
 }
@@ -1033,7 +1074,6 @@ int main(int argc, char *argv[]) {
 				bash_vars = 1;
 
  				wrap = wrap_objects | wrap_dollar;
-				escape = escape_none;
 				unquote |= unquote_keys;
 				*array_beg = '('; 
 				*array_sep = ' ';; 
@@ -1126,12 +1166,12 @@ int main(int argc, char *argv[]) {
 			case OPT_VALUES_ONLY: // -v, --values-only
 				if (optarg) {
 					if (strcasecmp(optarg, "strip") == 0 || strcasecmp(optarg, "no-arrays") == 0) {
-						value_only = 1;
+						strip_array = 1;
 					} else {
 						err_msg("Optional --value-only argument value is \"strip\" \n");
 					}
-				} else
-					value_only = 2;
+				}
+				value_only = 1;
 				break;
 			case OPT_WRAP: // -w, --wrap
 				if (optarg) {
@@ -1143,10 +1183,12 @@ int main(int argc, char *argv[]) {
 						wrap |= wrap_arrays;
 					} else if ((strcasecmp(optarg, "array$") == 0) || (strcasecmp(optarg, "arrays$") == 0)) {
 						wrap |= wrap_arrays | wrap_dollar;
-					} else if ((strcasecmp(optarg, "nothing") == 0) || (strcasecmp(optarg, "none") == 0)) {
-						wrap = wrap_none;
+					} else if ((strcasecmp(optarg, "all") == 0)) {
+						wrap = wrap_all;
+					} else if ((strcasecmp(optarg, "all$") == 0)) {
+						wrap = wrap_all | wrap_dollar;
 					} else {
-						err_msg("Optional --wrap argument values are \"objects[$]\", \"arrays[$]\" or \"nothing\"\n");
+						err_msg("Optional --wrap argument values are \"objects[$]\", \"arrays[$]\" or \"all[$]\"\n");
 					}
 				} else {
 					wrap = wrap_objects;
@@ -1191,24 +1233,6 @@ int main(int argc, char *argv[]) {
 					asprintf(&enum_fmt, "%s", optarg);
 				}
 				break;
-			case OPT_ESCAPE: // -e, --escape
-				if (optarg) {
-					if (strcasecmp(optarg, "none") == 0 || strcasecmp(optarg, "nothing") == 0 || strcasecmp(optarg, "off") == 0) {
-						escape = escape_none;
-					} else if (strcasecmp(optarg, "keys") == 0 || strcasecmp(optarg, "fields") == 0 || strcasecmp(optarg, "attributes") == 0 || strcasecmp(optarg, "names") == 0) {
-						escape |= escape_keys;
-					} else if (strcasecmp(optarg, "values") == 0) {
-						escape |= escape_values;
-					} else if (strcasecmp(optarg, "all") == 0 || strcasecmp(optarg, "everything") == 0 || strcasecmp(optarg, "on") == 0) {
-						escape = escape_all;
-					} else {
-						err_msg("Optional --escape argument values are \"none\", \"keys\", \"values\" or \"all\"\n");
-					}
-				} else {
-					escape |= escape_values;
-				}
-				break;
-
 			case OPT_LIST: // -l, --list
 				if (optarg) {
 					if (strcasecmp(optarg, "1") == 0) {
@@ -1233,6 +1257,9 @@ int main(int argc, char *argv[]) {
 				quiet = 1;
 				break;
 
+			case OPT_ESCAPE: // -X, --specials
+				asprintf(&specials, "%s", optarg);
+				break;
 			case 0: 
 			case '?':
 			default:
@@ -1255,6 +1282,8 @@ int main(int argc, char *argv[]) {
 			err_msg("Conflicting --key=%s and -%d arguments", get_key, get_key_no);
 		} else if (check != json_unknown) {
 			err_msg("Conflicting --json and -%d arguments", get_key_no);
+		} else if (enumerate) {
+			err_msg("Conflicting --enumerate=\"%s\" and -%d arguments", escape_chars(enum_fmt), get_key_no);
 		}
 		quiet = no_messages = 1;
 	}
@@ -1325,9 +1354,6 @@ int main(int argc, char *argv[]) {
 			}
 
 			json = json_array;
-
-			level = 1;
-			in_array = 1;
 
 			yy = array(yy);
 	
