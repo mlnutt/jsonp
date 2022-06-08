@@ -619,7 +619,7 @@ static int elements(int yy) {
 	yy = _yylex();
 
 	if (yy == COMMA) {
-		if (level == 1) {
+		if ((level == 1) || ((level == 2) && value_only)) {
 			if (!enumerate && !iterate) {
 				if ( list_elements == 1 ) {
 					output(" ");
