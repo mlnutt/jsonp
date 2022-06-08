@@ -644,7 +644,7 @@ static int elements(int yy) {
  */
 static int array(int yy) {
 
-	if (++level == 1) {
+	if ((++level == 1) || ((level == 2) && value_only)) {
 		in_array = 1;
 		if (list_elements || enumerate) {
 			if (get_type) {
@@ -678,8 +678,7 @@ static int array(int yy) {
 				open_wrap = 1;
 			}
 		}
-		if (!strip_array)
-			output("[");
+		output("[");
 	}
 
 	yy = _yylex();
@@ -689,7 +688,7 @@ static int array(int yy) {
 	}
 	
 	if (yy == END_ARRAY) {
-		if (level == 1) {
+		if ((level == 1) || ((level == 2) && value_only)) {
 			if (!list_elements && !enumerate) {
 				if (!strip_array) {
 					output(" %s", array_end);
@@ -700,9 +699,7 @@ static int array(int yy) {
 				}
 			}
 		} else {
-			if (!((level == 2) && strip_array)) {
-				output("]");
-			}
+			output("]");
 			if ((level == 2) && open_wrap && (wrap || strip_array || list_elements || enumerate)) {
 				if (wrap & wrap_arrays) {
 					output("'");
