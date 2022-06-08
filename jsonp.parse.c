@@ -21,7 +21,7 @@ const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
 #define PGM_NAME "jsonp"
 
 #define VER_MAJOR 1
-#define VER_MINOR 2
+#define VER_MINOR 3
 #define VER_DATE __DATE__
 
 #define VER_RELEASE "release"
@@ -131,10 +131,13 @@ typedef enum {
 	wrap_dollar  = 0x01,
 	wrap_objects = 0x02,
 	wrap_arrays  = 0x04,
-	wrap_all     = wrap_objects | wrap_arrays,
+	wrap_values  = 0x08,
+	wrap_all     = wrap_objects | wrap_arrays | wrap_values,
 } wrap_t;
 
 static wrap_t wrap   = wrap_none;
+
+static int open_wrap   = 0;
 
 static int bash_vars   = 0;
 static int value_only  = 0;
@@ -148,6 +151,7 @@ static int count_keys    = 0;
 static int key_count     = 0;
 static int get_key_no    = 0;
 static int got_key       = 0;
+static int found_key     = 0;
 static int list_keys     = 0;
 static int list_elements = 0;
 static int get_type      = 0;
@@ -164,6 +168,8 @@ static int open_quote   = 0;
 static int show_type    = 0;
 
 static int enumerate = 0;
+static int iterate   = 0;
+static int is_value  = 0;
 
 static char *prefix_json  = "JSON_";
 static char *prefix_type  = "JTYP_";
@@ -185,7 +191,7 @@ static char *array_sep      = 0;
 static char *array_end      = 0;
 static char *enum_fmt       = 0;
 static char *enum_cmd       = 0;
-static char *element        = 0;
+static char *enum_itm       = 0;
 static char *output_buf     = 0;
 static char *esc_chars      = 0;
 
@@ -255,13 +261,29 @@ static void output(const char *fmt, ...) {
 		va_start(valist, fmt);
 		vprintf(fmt, valist);
 		va_end(valist);
-	} else  if (enumerate) {
+	} else  if (enumerate || iterate) {
+		if ( enumerate ) {
+			if ( get_type && !show_type ) {
+				return;
+			}
+			if ( get_element_no && (element_count != get_element_no)) {
+				return;
+			}
+		}
+		if ( iterate ) {
+			if (is_value && (list_keys && (list_keys != 3))) {
+				return;
+			}
+
+			if (is_value && get_type && !show_type) {
+				return;
+			}
+		}
 		va_start(valist, fmt);
 		vasprintf(&output_buf, fmt, valist);
 		va_end(valist);
 	
-		element = realloc(element, (element ? strlen(element) : 0) + (output_buf ? strlen(output_buf) : 0) + 1);
-		strcat(element, output_buf);
+		asprintf(&enum_itm, "%s%s", enum_itm ? enum_itm : "", output_buf);
 	}
 }
 
@@ -401,7 +423,7 @@ static char *bash_key(char *text) {
 
 	ptr = bash_key_text;
 
-	if (!isalpha(*ptr) && (*ptr != '_')) {
+	if (!prefix && !isalpha(*ptr) && (*ptr != '_')) {
 		if (isdigit(*ptr)) {
 			++changes;
 			asprintf(&bash_key_text, "_%s", bash_key_text);
@@ -435,6 +457,9 @@ static char *bash_key(char *text) {
  * Remove surronding " characters from a JSON value.
  */
 static char *unquote_value(char *text) {
+
+	if (level != 1)
+		return text;
 
 	if (!(unquote & unquote_values) || *text != '"') {
 		return text;
@@ -505,34 +530,59 @@ static int _yylex(void) {
  */
 static void json_type(int type) {
 
-	if (!quiet_arg) {
-		switch (type) {
-			case STRING:
-				output("STRING");
-				break;
-			case null:
-				output("null");
-				break;
-			case true:
-			case false:
-				output("BOOLEAN");
-				break;
-			case NUMBER:
-				output("NUMBER");
-				break;
-			case BEGIN_OBJECT:
-				output("OBJECT");
-				break;
-			case BEGIN_ARRAY:
-				output("ARRAY");
-				break;
-			default:
-				return;
-		}
-		output("%c", list_keys == 1 ? ' ' : '\n');
+	switch (type) {
+		case STRING:
+			output("%s", "STRING");
+			break;
+		case null:
+			output("%s", "null");
+			break;
+		case true:
+		case false:
+			output("%s", "BOOLEAN");
+			break;
+		case NUMBER:
+			output("%s", "NUMBER");
+			break;
+		case BEGIN_OBJECT:
+			output("%s", "OBJECT");
+			break;
+		case BEGIN_ARRAY:
+			output("%s", "ARRAY");
+			break;
+		default:
+			return;
 	}
+	output("%c", ((iterate || enumerate) ? 0 : (list_keys == 1) ? ' ' : '\n'));
 }
 
+static int run_enum_cmd(char *enum_fmt, char *enum_itm) {
+	static FILE *pp = NULL;
+
+	if (!enum_itm || !*enum_itm ) {
+		return 0;	
+	}
+
+	quiet = quiet_arg;
+
+	asprintf(&enum_cmd, enum_fmt, escape_chars(enum_itm)); 
+
+	if ((pp = popen(enum_cmd, "r"))) { 
+		#define RESULT_SIZE 4096
+		static char result[RESULT_SIZE];
+
+		while (fgets(result, RESULT_SIZE, pp) != NULL) {
+   			output("%s", result);
+		}
+		pclose(pp);
+	}
+
+	*enum_itm = 0;
+
+	quiet = 1;
+
+	return pp != NULL;
+}
 /*
  * Begin Recursive Descent parser functions...
  */
@@ -549,7 +599,7 @@ static int elements(int yy) {
 		if (get_element_no || count_elements) {
 			if (++element_count == get_element_no) {
 				if (!list_elements) {
-					quiet = quiet_arg;
+					quiet = enumerate || iterate ? 1 : quiet_arg; //mln
 					no_messages = no_messages_arg;
 				}
 			}
@@ -560,24 +610,7 @@ static int elements(int yy) {
 
 	if (level == 1) {
 		if (enumerate) {
-			static FILE *pp = NULL;
-
-			quiet = quiet_arg;
-
-			asprintf(&enum_cmd, enum_fmt, escape_chars(element)); 
-
-			if ((pp = popen(enum_cmd, "r"))) { 
-				#define RESULT_SIZE 4096
-				static char result[RESULT_SIZE];
-
-				while (fgets(result, RESULT_SIZE, pp) != NULL)
-   					output("%s", result);
-				pclose(pp);
-			}
-
-			*element = 0;
-
-			quiet = 1;
+			run_enum_cmd(enum_fmt, enum_itm);
 		} else if (get_element_no && (element_count == get_element_no)) {
 			quiet = no_messages = 1;
 		}
@@ -587,7 +620,7 @@ static int elements(int yy) {
 
 	if (yy == COMMA) {
 		if (level == 1) {
-			if (!enumerate) {
+			if (!enumerate && !iterate) {
 				if ( list_elements == 1 ) {
 					output(" ");
 				} else if ( list_elements == 2 ) {
@@ -622,7 +655,7 @@ static int array(int yy) {
 		if ( !list_elements && !enumerate ) {
 			if (!strip_array) {
 				if ( wrap & wrap_arrays ) {
-					if (wrap & wrap_objects) { // If we're wrapping the bas array we don't wrap an object elements...
+					if (wrap & wrap_objects) { // If we're wrapping the base array we don't wrap any of its' object elements...
 						wrap -= wrap_objects;
 					}
 
@@ -630,17 +663,19 @@ static int array(int yy) {
 						output("$");
 					}
 					output("'");
+					open_wrap = 1;
 				}
 				output("%s ", array_beg);
 			}
 		}
 	} else {
-		if ( level == 2 && (strip_array || list_elements || enumerate )) {
+		if ( level == 2 && !open_wrap && (wrap || strip_array || list_elements || enumerate )) {
 			if ( wrap & wrap_arrays ) {
 				if ( wrap & wrap_dollar ) {
 					output("$");
 				}
 				output("'");
+				open_wrap = 1;
 			}
 		}
 		output("[");
@@ -657,17 +692,18 @@ static int array(int yy) {
 			if (!list_elements && !enumerate) {
 				if (!strip_array) {
 					output(" %s", array_end);
-				
 					if (wrap & wrap_arrays) {
 						output("'");
+						open_wrap = 0;
 					}
 				}
 			}
 		} else {
 			output("]");
-			if ((level == 2) && (strip_array || list_elements || enumerate)) {
+			if ((level == 2) && open_wrap && (wrap || strip_array || list_elements || enumerate)) {
 				if (wrap & wrap_arrays) {
 					output("'");
+					open_wrap = 0;
 				}
 			}
 		}
@@ -690,26 +726,24 @@ static int array(int yy) {
  * 	ARRAY
  */
 static int value(int yy) {
-	int i;
 
 	if (get_element_no && get_type) {
 		if (element_count == get_element_no) {
 			if (show_type) {
-				quiet = quiet_arg;
+				quiet = (enumerate || iterate) ? 1 : quiet_arg; //mln
 				json_type(yy);
 				show_type = 0;
 			}
-			quiet=1;
+			quiet = 1;
 		}
 	} else if (show_type || (get_type && got_key)) {
-		quiet = quiet_arg;
+		quiet = (enumerate || iterate) ? 1 : quiet_arg; //mln
 		json_type(yy);
-
-		quiet=1;
-		show_type=0;
+		show_type = 0;
+		quiet = 1;
 
 		if (get_type && got_key) {
-			get_type=0;
+			got_key = iterate ? 1 : 0;
 		}
 	}
 
@@ -719,7 +753,16 @@ static int value(int yy) {
 		case false:
 		case null:
 		case NUMBER: {
+			if ((level == 1) && (wrap & wrap_values)) {
+				if (wrap & wrap_dollar) {
+					output("$");
+				}
+				output("'");
+			}
 			output("%s", unquote_value(_yytext));
+			if ((level == 1) && (wrap & wrap_values)) {
+				output("'");
+			}
 			break;
 		}
 		case BEGIN_OBJECT: {
@@ -747,7 +790,7 @@ static int pair(int yy) {
 		if (++level == 1) {
 			if (++key_count == get_key_no) {
 				if (!list_keys) {
-					quiet = quiet_arg;
+					quiet = (enumerate || iterate) ? 1 : quiet_arg; //mln
 					no_messages = no_messages_arg;
 				}
 				if (get_type) {
@@ -755,28 +798,28 @@ static int pair(int yy) {
 				}
 			} else if (get_key) {
 				if (strcmp(get_key, _yytext) == 0) {
-					got_key = 1;
-					quiet = quiet_arg;
+					found_key = got_key = 1;
+					quiet = (enumerate || iterate) ? 1 : quiet_arg;
 					no_messages = no_messages_arg;
 				}
 			} 
 
 			if (list_keys) {
-				if (get_type && !get_key) {
+				if (get_type && (!get_key || iterate)) {
 					show_type=1;
 					if (!value_only) {
-						quiet = quiet_arg;
+						quiet = (enumerate || iterate) ? 1 : quiet_arg; //mln
 						output("%s%s", key(_yytext), assignment);
 						quiet = 1;
 					}
 				} else {
 					if (!get_key_no || (get_key_no && (key_count == get_key_no))) {
-						quiet = quiet_arg;
-						output("%s%s", key(_yytext), (list_keys) == 1 ? " " : "\n");
+						quiet = (enumerate || iterate) ? 1 : quiet_arg; //mln
+						output("%s%s", key(_yytext), (iterate ? "" : (list_keys == 1) ? " " : "\n"));
 						quiet = 1;
 					}
 				}
-			} else if (!value_only && !open_quote) {
+			} else if (!value_only) {
 				output("%s%s", key(_yytext), yylookahead() == COLON ? assignment : "");
 			}
 		} else {
@@ -789,13 +832,24 @@ static int pair(int yy) {
 		yy = _yylex();
 	
 		if (yy == COLON) {
+			++is_value;
 			yy = value(yy = _yylex());
 
 			if (level-- == 1) {
-				output("\n");
+				if (!iterate )
+					output("\n");
 				if ((key_count == get_key_no) || got_key) {
 					quiet = no_messages = 1;
 				}
+			}
+			if (is_value-- == 1) {
+				if (iterate) {
+					if ((!get_key_no && !get_key) || ((key_count == get_key_no) || got_key)) {
+						run_enum_cmd(enum_fmt, enum_itm);
+						got_key = 0;
+					}
+					*enum_itm = 0;
+				} 
 			}
 		} else {
 			err_msg("Expected \'COLON\' but got \"%s\"", *_yytext ? _yytext : "EOF");
@@ -832,7 +886,6 @@ static int keys(int yy) {
  * 	{ keys... }
  */
 static int object(int yy) {
-
 	if (level == 1) {
  		if (in_array && !open_quote++) {
 			output("%s{", wrap & wrap_objects ? (wrap & wrap_dollar ? "$'" : "'") : "");
@@ -853,9 +906,9 @@ static int object(int yy) {
 	}
 	
 	if (level != 0) {
-		output("}");
+		if ( !(iterate && list_keys) )
+			output("}");
 	}
-
 	if (in_array){
 		if (!--open_quote) {
 			output("%s", wrap & wrap_objects ? "'" : "");
@@ -912,7 +965,7 @@ static void cleanup(int rc) {
 
 	_free((void **) &bash_key_text);
 
-	_free((void **) &element);
+	_free((void **) &enum_itm);
 	_free((void **) &output_buf);
 
 	_free((void **) &enum_cmd);
@@ -952,7 +1005,7 @@ static void help(void) {
 	printf("\t-p,  --prefix[=STRING]\t\tPrefix key name (Default is \"%s\" or \"%s\" if --type)\n", prefix_json, prefix_type);
 	printf("\t-u,  --unquote[=WHAT]\t\tStrip double quotes from WHAT: \"none\" \"keys\" \"values\" or \"all\" (default)\n");
 	printf("\t-v,  --values-only[=strip]\tOutput only the values of \"key:value\" pairs; optionally strip surrounding array characters\n");
-	printf("\t-w,  --wrap[=WHAT]\t\tWrap single quotes around base objects or arrays (optionaly prefix with a bash-friendly \"$\"); where WHAT is \"all[$]\", \"objects[$]\" or \"arrays[$]\"\n"); 
+	printf("\t-w,  --wrap[=WHAT]\t\tWrap single quotes around base objects, arrays, values (optionaly prefix with a bash-friendly \"$\"); where WHAT is \"all[$]\", \"objects[$]\", \"arrays[$]\", or \"values[$]\"\n"); 
 	printf("\nOutput Control\n");
 	printf("\t-c,  --count\t\t\tOutput the number of base keys (or array elements)\n");
 	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
@@ -965,7 +1018,7 @@ static void help(void) {
 	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
 	printf("\nMiscellaneous:\n");
 	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default \"%s\")\n", escape_chars(esc_chars));
-	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base array elements (default is \"%s\")\n", escape_chars(enum_fmt));
+	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base keys or array elements (default is \"%s\")\n", escape_chars(enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
@@ -1066,6 +1119,8 @@ int main(int argc, char *argv[]) {
 					err_msg("Conflicting -%d and --json arguments", get_key_no);
 				} else if (get_key) {
 					err_msg("Conflicting --key=%s and --json arguments", get_key);
+				} else if (enumerate) {
+					err_msg("Conflicting --enumerate=\"%s\" and --json arguments", escape_chars(enum_fmt), get_key_no);
 				}
 
 				quiet = 1;
@@ -1073,7 +1128,7 @@ int main(int argc, char *argv[]) {
 			case OPT_BASH: // -B, --bash
 				bash_vars = 1;
 
- 				wrap = wrap_objects | wrap_dollar;
+ 				wrap |= wrap_objects | wrap_dollar;
 				unquote |= unquote_keys;
 				*array_beg = '('; 
 				*array_sep = ' ';; 
@@ -1183,15 +1238,19 @@ int main(int argc, char *argv[]) {
 						wrap |= wrap_arrays;
 					} else if ((strcasecmp(optarg, "array$") == 0) || (strcasecmp(optarg, "arrays$") == 0)) {
 						wrap |= wrap_arrays | wrap_dollar;
+					} else if ((strcasecmp(optarg, "values") == 0) || (strcasecmp(optarg, "array") == 0)) {
+						wrap |= wrap_values;
+					} else if ((strcasecmp(optarg, "value$") == 0) || (strcasecmp(optarg, "values$") == 0)) {
+						wrap |= wrap_values | wrap_dollar;
 					} else if ((strcasecmp(optarg, "all") == 0)) {
-						wrap = wrap_all;
+						wrap |= wrap_all;
 					} else if ((strcasecmp(optarg, "all$") == 0)) {
-						wrap = wrap_all | wrap_dollar;
+						wrap |= wrap_all | wrap_dollar;
 					} else {
 						err_msg("Optional --wrap argument values are \"objects[$]\", \"arrays[$]\" or \"all[$]\"\n");
 					}
 				} else {
-					wrap = wrap_objects;
+					wrap |= wrap_objects;
 				}
 
 				break;
@@ -1282,8 +1341,6 @@ int main(int argc, char *argv[]) {
 			err_msg("Conflicting --key=%s and -%d arguments", get_key, get_key_no);
 		} else if (check != json_unknown) {
 			err_msg("Conflicting --json and -%d arguments", get_key_no);
-		} else if (enumerate) {
-			err_msg("Conflicting --enumerate=\"%s\" and -%d arguments", escape_chars(enum_fmt), get_key_no);
 		}
 		quiet = no_messages = 1;
 	}
@@ -1307,16 +1364,20 @@ int main(int argc, char *argv[]) {
 
 		if (yy == BEGIN_OBJECT) { // "{ ... }"
 
-			if (enumerate) {
-				err_msg("Only \"arrays\" can be enumerated...\n");
-			}
-
 			json = json_object;
 
 			if (get_key) {
 				no_messages = 1;
 			} else if (get_type && !list_keys && !get_key_no && !check) {
-				list_keys=2;
+				list_keys=3;
+			}
+
+			if (iterate = enumerate) {
+				if (get_type) {
+					list_keys = 3;
+				}
+				count_keys = quiet = 1;
+				enumerate = 0;
 			}
 
 			yy = object(yy);
@@ -1387,11 +1448,11 @@ int main(int argc, char *argv[]) {
 			quiet = quiet_arg;
 			no_messages = no_messages_arg;
 
-			if (count_keys) {
+			if (count_keys && !iterate) {
 				output("%d", key_count);
 			} else if (count_elements && !enumerate) {
 				output("%d", element_count);
-			} else if (get_key && !got_key) {
+			} else if (get_key && !found_key) {
 				err_msg("%s is not a key", get_key);
 			} else if (get_key_no > key_count) {
 				err_msg("There %s only %d key%s", key_count > 1 ? "are" : "is", key_count, key_count > 1 ? "s" : "");
