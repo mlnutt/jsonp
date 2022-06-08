@@ -678,7 +678,8 @@ static int array(int yy) {
 				open_wrap = 1;
 			}
 		}
-		output("[");
+		if (!strip_array)
+			output("[");
 	}
 
 	yy = _yylex();
@@ -699,7 +700,9 @@ static int array(int yy) {
 				}
 			}
 		} else {
-			output("]");
+			if (!((level == 2) && strip_array)) {
+				output("]");
+			}
 			if ((level == 2) && open_wrap && (wrap || strip_array || list_elements || enumerate)) {
 				if (wrap & wrap_arrays) {
 					output("'");
