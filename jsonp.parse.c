@@ -1369,7 +1369,7 @@ int main(int argc, char *argv[]) {
 						err_msg("Invalid argument --timeout=\"%s\"", optarg);
 					}
 				} else {
-					timeout = 5;
+					timeout = 5000;
 				}
 				break;
 			case 0: 
