@@ -1,10 +1,14 @@
 #define _GNU_SOURCE
 
+//#define WRAP
+
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <ctype.h>
+#include <unistd.h>
+#include <sys/types.h>
 
 #include <stdarg.h>
 #include <getopt.h>
@@ -25,6 +29,26 @@ const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
 #define VER_DATE __DATE__
 
 #define VER_RELEASE "release"
+
+unsigned int timeout = 0;
+
+int input_timeout(int filedes, unsigned int msec) {
+	fd_set set;
+	struct timeval timeout;
+	int rc = 0;
+
+	FD_ZERO(&set);
+	FD_SET(filedes, &set);
+
+	timeout.tv_sec  = (msec / 1000);
+	timeout.tv_usec = (msec % 1000) * (1000000 / 1000);
+
+	do {
+		rc = select(FD_SETSIZE, &set, NULL, NULL, &timeout);
+	} while ((rc == -1) && (errno == EINTR));
+
+	return rc;
+}
 
 /*
 object
@@ -52,7 +76,7 @@ value
 	null
 */
 
-#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tw::v::V"
+#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
 
 typedef enum {
 	OPT_ASSIGNMENT  = '=',
@@ -72,6 +96,7 @@ typedef enum {
 	OPT_NO_MESSAGES	= 's',
 	OPT_STRING	= 'S',
 	OPT_TYPE        = 't',
+	OPT_TIMEOUT     = 'T',
 	OPT_UNQUOTE     = 'u',
 	OPT_VALUES_ONLY = 'v',
  	OPT_VERSION	= 'V',
@@ -110,6 +135,7 @@ static struct option long_options[] = {
 	{"quiet",		no_argument,		0,		OPT_QUIET },
 	{"silent",		no_argument,		0,		OPT_QUIET },
 	{"no-messages",		no_argument,		0,		OPT_NO_MESSAGES },
+	{"timeout",		optional_argument,	0,		OPT_TIMEOUT },
 	{"verbose",		no_argument,		0,		OPT_VERBOSE },
 	{"version",		no_argument,		0,		OPT_VERSION },
 
@@ -162,10 +188,10 @@ static int no_messages     = 0;
 static int no_messages_arg = 0;
 static int verbose         = 0;
 
-static int level        = 0;
-static int in_array     = 0;
-static int open_quote   = 0;
-static int show_type    = 0;
+static int level      = 0;
+static int in_array   = 0;
+static int open_quote = 0;
+static int show_type  = 0;
 
 static int enumerate = 0;
 static int iterate   = 0;
@@ -619,8 +645,12 @@ static int elements(int yy) {
 	yy = _yylex();
 
 	if (yy == COMMA) {
+#ifdef WRAP
+		if (level == 1) {
+#else
 		if ((level == 1) || ((level == 2) && value_only)) {
-			if (!enumerate && !iterate) {
+#endif
+			if (value_only || (!enumerate && !iterate)) {
 				if ( list_elements == 1 ) {
 					output(" ");
 				} else if ( list_elements == 2 ) {
@@ -628,7 +658,7 @@ static int elements(int yy) {
 				} else {
 					output(array_sep);
 				}
-			}
+			} 
 		} else {
 			output(",");
 		}
@@ -644,7 +674,11 @@ static int elements(int yy) {
  */
 static int array(int yy) {
 
+#ifdef WRAP
+	if (++level == 1) {
+#else
 	if ((++level == 1) || ((level == 2) && value_only)) {
+#endif
 		in_array = 1;
 		if (list_elements || enumerate) {
 			if (get_type) {
@@ -688,7 +722,11 @@ static int array(int yy) {
 	}
 	
 	if (yy == END_ARRAY) {
+#ifdef WRAP
+		if (level == 1) {
+#else
 		if ((level == 1) || ((level == 2) && value_only)) {
+#endif
 			if (!list_elements && !enumerate) {
 				if (!strip_array) {
 					output(" %s", array_end);
@@ -872,7 +910,7 @@ static int keys(int yy) {
 	yy = _yylex();
 
 	if (yy == COMMA) {
-		if ( level != 0) {
+		if ( level > 0) {
 			output(",");
 		}
 		yy = keys(yy = _yylex());
@@ -895,7 +933,7 @@ static int object(int yy) {
 		} else {
 			output("{");
 		}
-	} else if (level != 0){
+	} else if (level > 0){
 		output("{");
 	}
 
@@ -905,7 +943,7 @@ static int object(int yy) {
 		yy = keys(yy);
 	}
 	
-	if (level != 0) {
+	if (level > 0) {
 		if ( !(iterate && list_keys) )
 			output("}");
 	}
@@ -1022,6 +1060,7 @@ static void help(void) {
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
+	printf("\t-T   --timeout[=TIME]\t\tWait TIME seconds before timing out and exiting (5 seconds default)\n");
 	printf("\t-V   --version\t\t\tDisplay version information and exit\n");
 	printf("\t     --verbose\t\t\tBe verbose about --json validation\n");
 
@@ -1319,6 +1358,20 @@ int main(int argc, char *argv[]) {
 			case OPT_ESCAPE: // -e, --escape
 				asprintf(&esc_chars, "%s", optarg);
 				break;
+			case OPT_TIMEOUT: // -T, --timeout
+				if (optarg) {
+					char *ptr = 0;
+
+					errno = 0;
+					timeout = strtol(optarg, &ptr, 10);
+
+					if ( ((timeout == 0) && (errno != 0)) || (ptr && (*ptr != 0)) ) {
+						err_msg("Invalid argument --timeout=\"%s\"", optarg);
+					}
+				} else {
+					timeout = 5;
+				}
+				break;
 			case 0: 
 			case '?':
 			default:
@@ -1360,9 +1413,19 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!rc) {
+		if (timeout && !(yyin || input_timeout (STDIN_FILENO, timeout))) {
+			err_msg("Timeout waiting for input");
+		}
+
 		yy = _yylex();
 
 		if (yy == BEGIN_OBJECT) { // "{ ... }"
+
+#ifdef WRAP
+			if ( value_only ) {
+				--level;
+			}
+#endif
 
 			json = json_object;
 
