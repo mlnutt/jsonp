@@ -32,37 +32,39 @@ INSTALL
 
 
 USAGE
-	Usage: jsonp [OPTION]... [INFILE]
+Usage: jsonp [OPTION]... [INFILE]
 
-	Output Formating:
-		-=,  --assignment[=STRING]	Output STRING as assignment token instead of ":" (default is "=")
-		-a   --array[=STRING]		Output characters for arrays instead of "[,]" (default is "( )")
-		-b,  --bash-variables		Output bash-friendly variable names, i.e., [_a-zA-Z][_a-zA-Z0-9]+ (substituting '_' for invalid characters)
-		-B,  --bash			Alias for --wrap=$ --unquote=keys --escape=none --array-chars="( )" --assignment="=" --bash-variables
-		-e,  --escape[=WHAT]		Escape single quotes in value strings; where WHAT is "none" "keys", "values" or "all" (default)
-		-p,  --prefix[=STRING]		Prefix key name (Default is "JSON_" or "JTYP_" if --type)
-		-u,  --unquote[=WHAT]		Strip double quotes from WHAT: "none" "keys" "values" or "all" (default)
-		-v,  --values-only[=strip]	Output only the values of "key:value" pairs; optionally strip surrounding array characters
-		-w,  --wrap[=$|TOGGLE]		Wrap single quotes around "complex" pairs (optionaly prefix with a bash-friendly "$") or where TOGGLE is "on" or "off"
+Output Formating:
+        -=,  --assignment[=STRING]      Output STRING as assignment token instead of ":" (default is "=")
+        -a   --array[=STRING]           Output characters for arrays instead of "[,]" (default is "( )")
+        -b,  --bash-variables           Output bash-friendly variable names, i.e., [_a-zA-Z][_a-zA-Z0-9]+ (substituting '_' for invalid characters)
+        -B,  --bash                     Alias for --wrap=object$ --unquote=keys --array-chars="( )" --assignment="=" --bash-variables
+        -p,  --prefix[=STRING]          Prefix key name (Default is "JSON_" or "JTYP_" if --type)
+        -u,  --unquote[=WHAT]           Strip double quotes from WHAT: "none" "keys" "values" or "all" (default)
+        -v,  --values-only[=strip]      Output only the values of "key:value" pairs; optionally strip surrounding array characters
+        -w,  --wrap[=WHAT]              Wrap single quotes around base objects, arrays, values (optionaly prefix with a bash-friendly "$"); where WHAT is "all[$]", "objects[$]", "arrays[$]", or "values[$]"
 
-	Output Control
-		-c,  --count			Output the number of base keys (or array elements)
-		-j,  --json[=KIND]		Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
-		-k,  --key=STRING		Output only the key matching STRING
-		-l,  --list[=1]			Output only the base keys (or array elements); optionally output on one line
-		-t,  --type			Output the "type" of keys (or array elements) instead of values; can use with --json, --key, --list (default) or -NUM
-		-NUM				Output only the nth key (or nth array element)
+Output Control
+        -c,  --count                    Output the number of base keys (or array elements)
+        -j,  --json[=KIND]              Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
+        -k,  --key=STRING               Output only the key matching STRING
+        -l,  --list[=1]                 Output only the base keys (or array elements); optionally output on one line
+        -t,  --type                     Output the "type" of keys (or array elements) instead of values; can use with --json, --key, --list (default) or -NUM
+        -NUM                            Output only the nth key (or nth array element)
 
-	Input/Output
-		-o,  --output=OUTFILE		Output to OUTFILE instead of stdout
-		-S,  --string=STRING		Parse STRING instead of stdin or INFILE
+Input/Output
+        -o,  --output=OUTFILE           Output to OUTFILE instead of stdout
+        -S,  --string=STRING            Parse STRING instead of stdin or INFILE
 
-	Miscellaneous:
-		-h,  --help			Display this help and exit
-		-q   --quiet, --silent		Suppress output
-		-s   --no-messages		Suppress error and warning messages
-		-V   --version			Display version information and exit
-		     --verbose			Be verbose about --json validation
+Miscellaneous:
+        -e,  --escape=CHARS             Escape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default "\\\"")
+        -E,  --enumerate[=CMD]          Enumerate "CMD" for base keys or array elements (default is "echo \"%s\"")
+        -h,  --help                     Display this help and exit
+        -q   --quiet, --silent          Suppress output
+        -s   --no-messages              Suppress error and warning messages
+        -T   --timeout[=TIME]           Wait TIME seconds before timing out and exiting (5 seconds default)
+        -V   --version                  Display version information and exit
+             --verbose                  Be verbose about --json validation
 
 EXAMPLES
 
