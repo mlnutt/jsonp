@@ -32,6 +32,7 @@ INSTALL
 
 
 USAGE
+
 Usage: jsonp [OPTION]... [INFILE]
 
 Output Formating:
@@ -46,7 +47,6 @@ Output Formating:
 
 Output Control
         -c,  --count                    Output the number of base keys (or array elements)
-        -j,  --json[=KIND]              Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
         -k,  --key=STRING               Output only the key matching STRING
         -l,  --list[=1]                 Output only the base keys (or array elements); optionally output on one line
         -t,  --type                     Output the "type" of keys (or array elements) instead of values; can use with --json, --key, --list (default) or -NUM
@@ -57,15 +57,68 @@ Input/Output
         -S,  --string=STRING            Parse STRING instead of stdin or INFILE
 
 Miscellaneous:
-        -e,  --escape=CHARS             Escape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default "\\\"")
+        -e,  --escape=CHARS             Escape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be escaped (default "\\\"")
         -E,  --enumerate[=CMD]          Enumerate "CMD" for base keys or array elements (default is "echo \"%s\"")
         -h,  --help                     Display this help and exit
+        -j,  --json[=KIND]              Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
+        -J,  --JSON[=KIND]              Same as --json but is verbose
         -q   --quiet, --silent          Suppress output
         -s   --no-messages              Suppress error and warning messages
         -T   --timeout[=TIME]           Wait TIME seconds before timing out and exiting (5 seconds default)
         -V   --version                  Display version information and exit
-             --verbose                  Be verbose about --json validation
 
 EXAMPLES
 
+$ cd ./examples
+$ ./example1
 
+# Show the contents of "array.json"
+cat array.json
+[
+ {
+   "Name" : "Joe Root"
+ },
+ [ 10, 20, { "key":"fob"}, true, [1,2,[3,4,5]], 40, "Nested Array" ],
+ 77
+]
+
+# Simply input the array to jsonp...
+jsonp array.json
+[ {"Name":"Joe Root"},[10,20,{"key":"fob"},true,[1,2,[3,4,5]],40,"Nested Array"],77 ]
+
+# List the elements of the array
+jsonp -l array.json
+{"Name":"Joe Root"}
+[10,20,{"key":"fob"},true,[1,2,[3,4,5]],40,"Nested Array"]
+77
+
+# Show the number of elements in the array
+jsonp -c array.json
+3
+
+# List the first element of the array
+jsonp -1 array.json
+{"Name":"Joe Root"}
+
+# List the first element of the array and pipe it as input to "jsonp"
+jsonp -1 array.json | jsonp
+"Name":"Joe Root"
+
+# Ditto, but only display the value of the key:value pair
+jsonp -1 array.json | jsonp -v
+"Joe Root"
+
+# Ditto, but also unquote the value
+jsonp -1 array.json | jsonp -v -u
+Joe Root
+
+# Now, produce a bash compatable variable assignment...
+jsonp -1 array.json | jsonp -B
+Name="Joe Root"
+
+# Dito, but evaluate the output...
+eval `jsonp -1 array.json | jsonp -B`
+
+# Now we have the value of the "Name" object element in the array stored in a bash variable named "Name"
+echo $Name
+Joe Root

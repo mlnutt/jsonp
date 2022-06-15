@@ -1,0 +1,51 @@
+#!/bin/bash
+
+echo "# Show the contents of \"array.json\""
+echo "cat array.json"
+cat array.json
+echo
+echo "# Simply input the array to jsonp..."
+echo "jsonp array.json"
+jsonp array.json
+echo
+echo
+echo "# List the elements of the array"
+echo "jsonp -l array.json"
+jsonp -l array.json
+echo
+echo
+echo "# Show the number of elements in the array"
+echo "jsonp -c array.json"
+jsonp -c array.json
+echo
+echo
+echo "# List the first element of the array"
+echo "jsonp -1 array.json"
+jsonp -1 array.json
+echo 
+echo 
+echo "# List the first element of the array and pipe it as input to \"jsonp\""
+echo "jsonp -1 array.json | jsonp"
+jsonp -1 array.json | jsonp
+echo
+echo "# Ditto, but only display the value of the key:value pair"
+echo "jsonp -1 array.json | jsonp -v"
+jsonp -1 array.json | jsonp -v
+echo
+echo "# Ditto, but also unquote the value"
+echo "jsonp -1 array.json | jsonp -v -u"
+jsonp -1 array.json | jsonp -v -u
+echo
+echo "# Now, produce a bash compatable variable assignment..."
+echo "jsonp -1 array.json | jsonp -B"
+jsonp -1 array.json | jsonp -B
+echo
+echo "# Dito, but evaluate the output..."
+echo 'eval `jsonp -1 array.json | jsonp -B`'
+eval `jsonp -1 array.json | jsonp -B`
+echo
+echo "# Now we have the value of the \"Name\" object element in the array stored in a bash variable named \"Name\""
+echo 'echo $Name'
+echo $Name
+
+

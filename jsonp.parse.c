@@ -30,15 +30,18 @@ const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
 
 #define VER_RELEASE "release"
 
-unsigned int timeout = 0;
+static int timeout = 0;
 
-int input_timeout(int filedes, unsigned int msec) {
+/*
+ * Wait msec milliseconds for input on file handle fileh
+ */
+int input_timeout(int fileh, unsigned int msec) {
 	fd_set set;
 	struct timeval timeout;
 	int rc = 0;
 
 	FD_ZERO(&set);
-	FD_SET(filedes, &set);
+	FD_SET(fileh, &set);
 
 	timeout.tv_sec  = (msec / 1000);
 	timeout.tv_usec = (msec % 1000) * (1000000 / 1000);
@@ -76,7 +79,8 @@ value
 	null
 */
 
-#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
+//#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
+#define OPTIONS "0123456789=::a::bBce:E::hj::J::k:l::o:p::u::qsS:tT::w::v::"
 
 typedef enum {
 	OPT_ASSIGNMENT  = '=',
@@ -88,6 +92,7 @@ typedef enum {
 	OPT_ENUMERATE   = 'E',
  	OPT_HELP        = 'h',
 	OPT_JSON        = 'j',
+	OPT_JSONV       = 'J',
 	OPT_KEY         = 'k',
 	OPT_LIST        = 'l',
 	OPT_OUTPUT      = 'o',
@@ -102,7 +107,7 @@ typedef enum {
  	OPT_VERSION	= 'V',
 	OPT_WRAP        = 'w',
 
-	OPT_VERBOSE     = 200,
+//	OPT_VERBOSE     = 200,
 } option_t;
 
 static struct option long_options[] = {
@@ -119,7 +124,7 @@ static struct option long_options[] = {
 	{"count",	        no_argument,		0,		OPT_COUNT },
 	{"enumerate",		optional_argument,	0,		OPT_ENUMERATE },
 	{"json",		optional_argument,	0,		OPT_JSON },
-	{"JSON",		optional_argument,	0,		OPT_JSON },
+	{"JSON",		optional_argument,	0,		OPT_JSONV },
 	{"key",			required_argument,	0,		OPT_KEY },
 	{"attribute",		required_argument,	0,		OPT_KEY },
 	{"name",		required_argument,	0,		OPT_KEY },
@@ -136,7 +141,7 @@ static struct option long_options[] = {
 	{"silent",		no_argument,		0,		OPT_QUIET },
 	{"no-messages",		no_argument,		0,		OPT_NO_MESSAGES },
 	{"timeout",		optional_argument,	0,		OPT_TIMEOUT },
-	{"verbose",		no_argument,		0,		OPT_VERBOSE },
+	//{"verbose",		no_argument,		0,		OPT_VERBOSE },
 	{"version",		no_argument,		0,		OPT_VERSION },
 
 	{"escape",		required_argument,	0,		OPT_ESCAPE },
@@ -243,7 +248,7 @@ static char *_yytext        = 0;
 
 static char *_escape_pattern(char *text, char pattern);
 static char *escape_quotes(char *text);
-static char *escape_chars(char *text);
+static char *escape_chars(char *esc_chars, char *text);
 
 static char *bash_key(char *text);
 static char *unquote_value(char *text);
@@ -354,7 +359,7 @@ static inline int is_special(char c, char *s) {
 	return strchr(s, c) != NULL;
 }
 
-static char *escape_chars(char *text) {
+static char *escape_chars(char *esc_chars, char *text) {
 	char *ptr;
 	char *new_text;
 	int   count = 0;
@@ -585,13 +590,13 @@ static void json_type(int type) {
 static int run_enum_cmd(char *enum_fmt, char *enum_itm) {
 	static FILE *pp = NULL;
 
-	if (!enum_itm || !*enum_itm ) {
+	if (!enum_itm || !*enum_itm) {
 		return 0;	
 	}
 
 	quiet = quiet_arg;
 
-	asprintf(&enum_cmd, enum_fmt, escape_chars(enum_itm)); 
+	asprintf(&enum_cmd, enum_fmt, escape_chars(esc_chars, enum_itm)); 
 
 	if ((pp = popen(enum_cmd, "r"))) { 
 		#define RESULT_SIZE 4096
@@ -650,13 +655,16 @@ static int elements(int yy) {
 #else
 		if ((level == 1) || ((level == 2) && value_only)) {
 #endif
-			if (value_only || (!enumerate && !iterate)) {
+			//if (value_only || (!enumerate && !iterate)) {
+			if (value_only || !enumerate) {
 				if ( list_elements == 1 ) {
 					output(" ");
 				} else if ( list_elements == 2 ) {
 					output("\n");
 				} else {
-					output(array_sep);
+					//if ( !enumerate || ( enumerate && (level != 1) )) {
+						output("%s", array_sep);
+					//}
 				}
 			} 
 		} else {
@@ -1046,7 +1054,6 @@ static void help(void) {
 	printf("\t-w,  --wrap[=WHAT]\t\tWrap single quotes around base objects, arrays, values (optionaly prefix with a bash-friendly \"$\"); where WHAT is \"all[$]\", \"objects[$]\", \"arrays[$]\", or \"values[$]\"\n"); 
 	printf("\nOutput Control\n");
 	printf("\t-c,  --count\t\t\tOutput the number of base keys (or array elements)\n");
-	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
 	printf("\t-k,  --key=STRING\t\tOutput only the key matching STRING\n");
 	printf("\t-l,  --list[=1]\t\t\tOutput only the base keys (or array elements); optionally output on one line\n");
 	printf("\t-t,  --type\t\t\tOutput the \"type\" of keys (or array elements) instead of values; can use with --json, --key, --list (default) or -NUM\n");
@@ -1055,14 +1062,16 @@ static void help(void) {
 	printf("\t-o,  --output=OUTFILE\t\tOutput to OUTFILE instead of stdout\n");
 	printf("\t-S,  --string=STRING\t\tParse STRING instead of stdin or INFILE\n");
 	printf("\nMiscellaneous:\n");
-	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be scaped (default \"%s\")\n", escape_chars(esc_chars));
-	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base keys or array elements (default is \"%s\")\n", escape_chars(enum_fmt));
+	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be escaped (default \"%s\")\n", escape_chars(esc_chars, esc_chars));
+	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base keys or array elements (default is \"%s\")\n", escape_chars(esc_chars, enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
+	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
+	printf("\t-J,  --JSON[=KIND]\t\tSame as --json but is verbose\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
 	printf("\t-T   --timeout[=TIME]\t\tWait TIME seconds before timing out and exiting (5 seconds default)\n");
 	printf("\t-V   --version\t\t\tDisplay version information and exit\n");
-	printf("\t     --verbose\t\t\tBe verbose about --json validation\n");
+//	printf("\t     --verbose\t\t\tBe verbose about --json validation\n");
 
 	cleanup(0);
 }
@@ -1075,9 +1084,9 @@ static void init(void) {
 
 	asprintf(&assignment, "%c", ':');
 
-	asprintf(&esc_chars, "\\\""); // first char is the "escape char" which also will be escaped...
+	asprintf(&esc_chars, "%s", "\\\""); // first char is the "escape char" which also will be escaped...
 
-	asprintf(&enum_fmt, "echo \"%%s\""); 
+	asprintf(&enum_fmt, "%s", "echo \"%s\""); 
 }
 
 static inline int c_todigit(const char c) {
@@ -1131,11 +1140,18 @@ int main(int argc, char *argv[]) {
 			case OPT_STRING:
 				asprintf(&string, "%s", optarg);
 
-				yyin = fmemopen (string, strlen(string), "r");
+				yyin = fmemopen(string, strlen(string), "r");
 				break;
 			case OPT_OUTPUT:
 				freopen(optarg, "w", stdout);
 				break;
+			case OPT_JSONV:
+			//case OPT_VERBOSE:
+				if (quiet_arg && get_type) {
+					err_msg("Conflicting --quiet and --verbose arguments");
+				}
+				verbose = 1;
+				//break;
 			case OPT_JSON:
 				if (optarg) {
 					if (strcasecmp("array", optarg) == 0) {
@@ -1159,7 +1175,7 @@ int main(int argc, char *argv[]) {
 				} else if (get_key) {
 					err_msg("Conflicting --key=%s and --json arguments", get_key);
 				} else if (enumerate) {
-					err_msg("Conflicting --enumerate=\"%s\" and --json arguments", escape_chars(enum_fmt), get_key_no);
+					err_msg("Conflicting --enumerate=\"%s\" and --json arguments", escape_chars(esc_chars, enum_fmt), get_key_no);
 				}
 
 				quiet = 1;
@@ -1209,12 +1225,6 @@ int main(int argc, char *argv[]) {
 
 				quiet = 1;
 				count_keys = 1;
-				break;
-			case OPT_VERBOSE:
-				if (quiet_arg && get_type) {
-					err_msg("Conflicting --quiet and --verbose arguments");
-				}
-				verbose = 1;
 				break;
 			case OPT_QUIET: // -q, --quiet (suppress output)
 				if (verbose && get_type) {
@@ -1328,7 +1338,13 @@ int main(int argc, char *argv[]) {
 			case OPT_ENUMERATE: // -E, --enumerate
 				enumerate = 1;
 				if (optarg) {
+					char *ptr;
+
 					asprintf(&enum_fmt, "%s", optarg);
+
+					if (ptr = strstr(enum_fmt, "%J")) {
+						*(ptr + 1) = 's';
+					}
 				}
 				break;
 			case OPT_LIST: // -l, --list
@@ -1365,7 +1381,7 @@ int main(int argc, char *argv[]) {
 					errno = 0;
 					timeout = strtol(optarg, &ptr, 10);
 
-					if ( ((timeout == 0) && (errno != 0)) || (ptr && (*ptr != 0)) ) {
+					if ( ((timeout == 0) && (errno != 0)) || (ptr && (*ptr != 0)) || (timeout < 0) ) {
 						err_msg("Invalid argument --timeout=\"%s\"", optarg);
 					}
 				} else {
@@ -1413,7 +1429,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	if (!rc) {
-		if (timeout && !(yyin || input_timeout (STDIN_FILENO, timeout))) {
+		if (timeout && !(yyin || input_timeout(STDIN_FILENO, timeout))) {
 			err_msg("Timeout waiting for input");
 		}
 
