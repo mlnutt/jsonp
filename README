@@ -67,6 +67,9 @@ Miscellaneous:
         -T   --timeout[=TIME]           Wait TIME seconds before timing out and exiting (5 seconds default)
         -V   --version                  Display version information and exit
 
+NOTES (about usage)
+When using the --enumerate switch with a custom command "%s" is where the normal output of jsonp will be passed to "CMD".  If --enumerate is going to be called again (by "CMD") then "%J" can be used for the first enumeration, "%%J" for the second, "%%%%J" for the third, etc...).  One must be careful when enumerating to careful quote (perhaps with single ' quotes) but also to escape quotes within quotes...
+
 EXAMPLES
 
 $ cd ./examples
