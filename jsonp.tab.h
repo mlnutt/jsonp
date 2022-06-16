@@ -26,6 +26,7 @@ extern YYSTYPE yytext;
 
 extern int yylex(void);
 
+/*
 #ifndef YY_SIZE_T
 	extern int yyleng;
 #else
@@ -46,8 +47,9 @@ extern int yylex(void);
 
 #endif
 
-extern FILE* yyin;
-
 #undef yy_size_t
+
+*/
+extern FILE* yyin;
 
 #endif /* JSONP_TAB_H  */
