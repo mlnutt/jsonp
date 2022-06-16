@@ -4,7 +4,8 @@ CC=gcc
 LEX=flex
 LEX_LIB=-lfl
 
-LIBS=/usr/local/lib/libstr.a
+#LIBS=/usr/local/lib/libstr.a
+LIBS=
 BIN=/usr/local/bin/
 
 ifneq "$(CYGWIN)" ""
