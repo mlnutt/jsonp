@@ -58,7 +58,7 @@ Input/Output
 
 Miscellaneous:
         -e,  --escape=CHARS             Escape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be escaped (default "\\\"")
-        -E,  --enumerate[=CMD]          Enumerate "CMD" for base keys or array elements (default is "echo \"%s\"")
+        -E,  --enumerate[=CMD]          Enumerate "CMD" for base keys or array elements (default is "echo \"%J\"")
         -h,  --help                     Display this help and exit
         -j,  --json[=KIND]              Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
         -J,  --JSON[=KIND]              Same as --json but is verbose
@@ -68,7 +68,7 @@ Miscellaneous:
         -V   --version                  Display version information and exit
 
 NOTES (about usage)
-When using the --enumerate switch with a custom command "%s" is where the normal output of jsonp will be passed to "CMD".  If --enumerate is going to be called again (by "CMD") then "%J" can be used for the first enumeration, "%%J" for the second, "%%%%J" for the third, etc...).  One must be careful when enumerating to careful quote (perhaps with single ' quotes) but also to escape quotes within quotes...
+When using the --enumerate switch with a custom command "%J" is where the normal output of jsonp will be passed to "CMD".  If --enumerate is going to be called again (by "CMD") then "%J" will be used for the first enumeration, "%%J" for the second, "%%%%J" for the third, etc...).  Also, "%I" may be used to pass the key # or array element # to the external program; likewise, "%I", "%%I", "%%%%I", etc.  One must be careful when enumerating to quote (perhaps with single ' quotes) but also to escape quotes within quotes...
 
 EXAMPLES
 

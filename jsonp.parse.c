@@ -80,7 +80,7 @@ value
 */
 
 //#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
-#define OPTIONS "0123456789=::a::bBce:E::hj::J::k:l::o:p::u::qsS:tT::w::v::"
+#define OPTIONS "0123456789=::a::bBce:E::hij::J::k:l::o:p::u::qsS:tT::w::v::"
 
 typedef enum {
 	OPT_ASSIGNMENT  = '=',
@@ -91,6 +91,7 @@ typedef enum {
 	OPT_ESCAPE      = 'e',
 	OPT_ENUMERATE   = 'E',
  	OPT_HELP        = 'h',
+ 	OPT_INSENSATIVE = 'i',
 	OPT_JSON        = 'j',
 	OPT_JSONV       = 'J',
 	OPT_KEY         = 'k',
@@ -123,8 +124,6 @@ static struct option long_options[] = {
 
 	{"count",	        no_argument,		0,		OPT_COUNT },
 	{"enumerate",		optional_argument,	0,		OPT_ENUMERATE },
-	{"json",		optional_argument,	0,		OPT_JSON },
-	{"JSON",		optional_argument,	0,		OPT_JSONV },
 	{"key",			required_argument,	0,		OPT_KEY },
 	{"attribute",		required_argument,	0,		OPT_KEY },
 	{"name",		required_argument,	0,		OPT_KEY },
@@ -137,6 +136,10 @@ static struct option long_options[] = {
 	{"string",		required_argument,	0,		OPT_STRING },
 
 	{"help",		no_argument,		0,		OPT_HELP },
+	{"case-insensative",	no_argument,		0,		OPT_INSENSATIVE },
+	{"insensative",		no_argument,		0,		OPT_INSENSATIVE },
+	{"json",		optional_argument,	0,		OPT_JSON },
+	{"JSON",		optional_argument,	0,		OPT_JSONV },
 	{"quiet",		no_argument,		0,		OPT_QUIET },
 	{"silent",		no_argument,		0,		OPT_QUIET },
 	{"no-messages",		no_argument,		0,		OPT_NO_MESSAGES },
@@ -182,6 +185,7 @@ static int count_keys    = 0;
 static int key_count     = 0;
 static int get_key_no    = 0;
 static int got_key       = 0;
+static int insensative   = 0;
 static int found_key     = 0;
 static int list_keys     = 0;
 static int list_elements = 0;
@@ -198,9 +202,10 @@ static int in_array   = 0;
 static int open_quote = 0;
 static int show_type  = 0;
 
-static int enumerate = 0;
-static int iterate   = 0;
-static int is_value  = 0;
+static int enumerate  = 0;
+static int iterate    = 0;
+static int j_before_u = 1;
+static int is_value   = 0;
 
 static char *prefix_json  = "JSON_";
 static char *prefix_type  = "JTYP_";
@@ -265,6 +270,8 @@ static int value(int yy);
 static int pair(int yy);
 static int keys(int yy);
 static int object(int yy);
+
+static int run_enum_cmd(char *enum_fmt, char *enum_itm, unsigned enum_cnt);
 
 static void _free(void **ptr);
 static void init(void);
@@ -587,16 +594,21 @@ static void json_type(int type) {
 	output("%c", ((iterate || enumerate) ? 0 : (list_keys == 1) ? ' ' : '\n'));
 }
 
-static int run_enum_cmd(char *enum_fmt, char *enum_itm) {
+static int run_enum_cmd(char *enum_fmt, char *enum_itm, unsigned enum_cnt) {
+	int rc = 0;
 	static FILE *pp = NULL;
 
 	if (!enum_itm || !*enum_itm) {
-		return 0;	
+		return rc;	
 	}
 
 	quiet = quiet_arg;
 
-	asprintf(&enum_cmd, enum_fmt, escape_chars(esc_chars, enum_itm)); 
+	if (j_before_u) {
+		asprintf(&enum_cmd, enum_fmt, escape_chars(esc_chars, enum_itm), enum_cnt); 
+	} else {
+		asprintf(&enum_cmd, enum_fmt, enum_cnt, escape_chars(esc_chars, enum_itm)); 
+	}
 
 	if ((pp = popen(enum_cmd, "r"))) { 
 		#define RESULT_SIZE 4096
@@ -605,14 +617,17 @@ static int run_enum_cmd(char *enum_fmt, char *enum_itm) {
 		while (fgets(result, RESULT_SIZE, pp) != NULL) {
    			output("%s", result);
 		}
-		pclose(pp);
+		rc = pclose(pp);
+//printf("rc = %d\n", rc/256);
+	} else {
+		rc = -1;
 	}
 
 	*enum_itm = 0;
 
 	quiet = 1;
 
-	return pp != NULL;
+	return rc;
 }
 /*
  * Begin Recursive Descent parser functions...
@@ -641,7 +656,7 @@ static int elements(int yy) {
 
 	if (level == 1) {
 		if (enumerate) {
-			run_enum_cmd(enum_fmt, enum_itm);
+			run_enum_cmd(enum_fmt, enum_itm, element_count);
 		} else if (get_element_no && (element_count == get_element_no)) {
 			quiet = no_messages = 1;
 		}
@@ -843,7 +858,7 @@ static int pair(int yy) {
 					show_type = 1;
 				}
 			} else if (get_key) {
-				if (strcmp(get_key, _yytext) == 0) {
+				if (insensative ? (stricmp(get_key, _yytext) == 0) :  (strcmp(get_key, _yytext) == 0)) {
 					found_key = got_key = 1;
 					quiet = (enumerate || iterate) ? 1 : quiet_arg;
 					no_messages = no_messages_arg;
@@ -891,7 +906,7 @@ static int pair(int yy) {
 			if (is_value-- == 1) {
 				if (iterate) {
 					if ((!get_key_no && !get_key) || ((key_count == get_key_no) || got_key)) {
-						run_enum_cmd(enum_fmt, enum_itm);
+						run_enum_cmd(enum_fmt, enum_itm, key_count);
 						got_key = 0;
 					}
 					*enum_itm = 0;
@@ -1065,6 +1080,7 @@ static void help(void) {
 	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be escaped (default \"%s\")\n", escape_chars(esc_chars, esc_chars));
 	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base keys or array elements (default is \"%s\")\n", escape_chars(esc_chars, enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
+	printf("\t-i,  --case-insensative\t\tBe case insensative when using --key option\n");
 	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
 	printf("\t-J,  --JSON[=KIND]\t\tSame as --json but is verbose\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
@@ -1235,6 +1251,9 @@ int main(int argc, char *argv[]) {
 			case OPT_NO_MESSAGES: // -s, --no-messages (suppress error messages)
 				no_messages_arg = 1;
 				break;
+			case OPT_INSENSATIVE: // -i, --case-insensative (for --key)
+				insensative = 1;
+				break;
 			case OPT_KEY: // -k, --key (return only value for matching pair identifier string)
 				if (get_key) {
 					err_msg("Conflicting --key=%s and --key=\"%s\" arguments", get_key, optarg);
@@ -1338,13 +1357,20 @@ int main(int argc, char *argv[]) {
 			case OPT_ENUMERATE: // -E, --enumerate
 				enumerate = 1;
 				if (optarg) {
-					char *ptr;
+					char *j_ptr = 0;
+					char *u_ptr = 0;
 
 					asprintf(&enum_fmt, "%s", optarg);
 
-					if (ptr = strstr(enum_fmt, "%J")) {
-						*(ptr + 1) = 's';
+					if (j_ptr = strstr(enum_fmt, "%J")) {
+						*(j_ptr + 1) = 's';
 					}
+
+					if (u_ptr = strstr(enum_fmt, "%I")) {
+						*(u_ptr + 1) = 'u';
+					}
+
+					j_before_u = ( j_ptr < u_ptr );
 				}
 				break;
 			case OPT_LIST: // -l, --list
