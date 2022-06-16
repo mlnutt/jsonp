@@ -33,7 +33,8 @@ extern int yyleng;
 #define YY_TYPEDEF_YY_SIZE_T
 typedef size_t yy_size_t;
 #endif
-extern yy_size_t yyleng;
+#extern yy_size_t yyleng;
+extern int yyleng;
 #endif
 
 extern FILE* yyin;

@@ -13,7 +13,7 @@
 #include <stdarg.h>
 #include <getopt.h>
 
-#include <str.h>
+//#include <str.h>
 
 #include "jsonp.tab.h"
 
@@ -29,6 +29,25 @@ const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
 #define VER_DATE __DATE__
 
 #define VER_RELEASE "release"
+
+#define stricmp strcasecmp
+#define strincmp strncasecmp
+
+int is_bash_var_char(const char c) {
+        return (isalnum((int)c) || (c == '_'));
+}
+
+static int is_bash_var(const char *s) {
+        if ( isalpha(*s) || (*s == '_')) {
+                for ( ++s; *s; ++s) {
+                        if ( !is_bash_var_char(*s) ) {
+                                break;
+                        }
+                }
+        }
+
+        return !*s;
+}
 
 static int timeout = 0;
 
