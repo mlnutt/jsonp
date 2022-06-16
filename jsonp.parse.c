@@ -129,8 +129,8 @@ value
 	null
 */
 
-//#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
-#define OPTIONS "0123456789=::a::bBce:E::hij::J::k:l::o:p::u::qsS:tT::w::v::"
+#define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
+//#define OPTIONS "0123456789=::a::bBce:E::hij::J::k:l::o:p::u::qsS:tT::w::v::"
 
 typedef enum {
 	OPT_ASSIGNMENT  = '=',
@@ -141,9 +141,9 @@ typedef enum {
 	OPT_ESCAPE      = 'e',
 	OPT_ENUMERATE   = 'E',
  	OPT_HELP        = 'h',
- 	OPT_INSENSATIVE = 'i',
+ 	OPT_IGNORE_CASE = 'i',
 	OPT_JSON        = 'j',
-	OPT_JSONV       = 'J',
+//	OPT_JSONV       = 'J',
 	OPT_KEY         = 'k',
 	OPT_LIST        = 'l',
 	OPT_OUTPUT      = 'o',
@@ -186,15 +186,13 @@ static struct option long_options[] = {
 	{"string",		required_argument,	0,		OPT_STRING },
 
 	{"help",		no_argument,		0,		OPT_HELP },
-	{"case-insensative",	no_argument,		0,		OPT_INSENSATIVE },
-	{"insensative",		no_argument,		0,		OPT_INSENSATIVE },
+	{"ignore-case",		no_argument,		0,		OPT_IGNORE_CASE },
+	{"insensative",		no_argument,		0,		OPT_IGNORE_CASE },
 	{"json",		optional_argument,	0,		OPT_JSON },
-	{"JSON",		optional_argument,	0,		OPT_JSONV },
 	{"quiet",		no_argument,		0,		OPT_QUIET },
 	{"silent",		no_argument,		0,		OPT_QUIET },
 	{"no-messages",		no_argument,		0,		OPT_NO_MESSAGES },
 	{"timeout",		optional_argument,	0,		OPT_TIMEOUT },
-	//{"verbose",		no_argument,		0,		OPT_VERBOSE },
 	{"version",		no_argument,		0,		OPT_VERSION },
 
 	{"escape",		required_argument,	0,		OPT_ESCAPE },
@@ -235,7 +233,7 @@ static int count_keys    = 0;
 static int key_count     = 0;
 static int get_key_no    = 0;
 static int got_key       = 0;
-static int insensative   = 0;
+static int ignore_case   = 0;
 static int found_key     = 0;
 static int list_keys     = 0;
 static int list_elements = 0;
@@ -245,7 +243,7 @@ static int quiet           = 0;
 static int quiet_arg       = 0;
 static int no_messages     = 0;
 static int no_messages_arg = 0;
-static int verbose         = 0;
+//static int verbose         = 0;
 
 static int level      = 0;
 static int in_array   = 0;
@@ -330,7 +328,6 @@ static void cleanup(int rc);
 static void output(const char *fmt, ...);
 static void err_msg(const char *fmt, ...);
 static void wrn_msg(const char *fmt, ...);
-static void vbs_msg(const char *fmt, ...);
 
 static void version(void);
 static void little_help(void);
@@ -397,17 +394,6 @@ static void wrn_msg(const char *fmt, ...) {
 		fprintf(stderr, "Warning: ");
 		vfprintf(stderr, fmt, valist);
 		fprintf(stderr, "\n");
-		va_end(valist);
-	}
-}
-
-static void vbs_msg(const char *fmt, ...) {
-	va_list valist;
-
-	if (verbose) {
-		va_start(valist, fmt);
-		vprintf(fmt, valist);
-		printf("\n");
 		va_end(valist);
 	}
 }
@@ -907,7 +893,7 @@ static int pair(int yy) {
 					show_type = 1;
 				}
 			} else if (get_key) {
-				if (insensative ? (stricmp(get_key, _yytext) == 0) :  (strcmp(get_key, _yytext) == 0)) {
+				if (ignore_case ? (stricmp(get_key, _yytext) == 0) :  (strcmp(get_key, _yytext) == 0)) {
 					found_key = got_key = 1;
 					quiet = (enumerate || iterate) ? 1 : quiet_arg;
 					no_messages = no_messages_arg;
@@ -1129,14 +1115,12 @@ static void help(void) {
 	printf("\t-e,  --escape=CHARS\t\tEscape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be escaped (default \"%s\")\n", escape_chars(esc_chars, esc_chars));
 	printf("\t-E,  --enumerate[=CMD]\t\tEnumerate \"CMD\" for base keys or array elements (default is \"%s\")\n", escape_chars(esc_chars, enum_fmt));
 	printf("\t-h,  --help\t\t\tDisplay this help and exit\n");
-	printf("\t-i,  --case-insensative\t\tBe case insensative when using --key option\n");
+	printf("\t-i,  --ignore-case\t\tBe case insensative when using --key option\n");
 	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
-	printf("\t-J,  --JSON[=KIND]\t\tSame as --json but is verbose\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
 	printf("\t-T   --timeout[=TIME]\t\tWait TIME seconds before timing out and exiting (5 seconds default)\n");
 	printf("\t-V   --version\t\t\tDisplay version information and exit\n");
-//	printf("\t     --verbose\t\t\tBe verbose about --json validation\n");
 
 	cleanup(0);
 }
@@ -1210,6 +1194,7 @@ int main(int argc, char *argv[]) {
 			case OPT_OUTPUT:
 				freopen(optarg, "w", stdout);
 				break;
+/*
 			case OPT_JSONV:
 			//case OPT_VERBOSE:
 				if (quiet_arg && get_type) {
@@ -1217,6 +1202,7 @@ int main(int argc, char *argv[]) {
 				}
 				verbose = 1;
 				//break;
+*/
 			case OPT_JSON:
 				if (optarg) {
 					if (strcasecmp("array", optarg) == 0) {
@@ -1292,16 +1278,18 @@ int main(int argc, char *argv[]) {
 				count_keys = 1;
 				break;
 			case OPT_QUIET: // -q, --quiet (suppress output)
+/*
 				if (verbose && get_type) {
 					err_msg("Conflicting --verbose and --quiet arguments");
 				}
+*/
 				quiet = quiet_arg = 1;
 				break;
 			case OPT_NO_MESSAGES: // -s, --no-messages (suppress error messages)
 				no_messages_arg = 1;
 				break;
-			case OPT_INSENSATIVE: // -i, --case-insensative (for --key)
-				insensative = 1;
+			case OPT_IGNORE_CASE: // -i, --ignore-case (for --key)
+				ignore_case = 1;
 				break;
 			case OPT_KEY: // -k, --key (return only value for matching pair identifier string)
 				if (get_key) {
@@ -1322,8 +1310,10 @@ int main(int argc, char *argv[]) {
 			case OPT_TYPE: // -t, --type (return the type of key)
 				if (count_keys) {
 					err_msg("Conflicting --count and --type arguments");
+/*
 				} else if (quiet_arg && verbose) {
 					err_msg("Conflicting --quiet and --verbose arguments");
+*/
 				} else if (list_keys) {
 					err_msg("Conflicting --list and --type arguments");
 				}
@@ -1584,19 +1574,20 @@ int main(int argc, char *argv[]) {
 		}
 	
 		if (check) {
+			quiet = quiet_arg;
+
 			if (check_type) {
-				quiet = quiet_arg;
 				output("%s", json == json_object ? "OBJECT" : "ARRAY");
 			}
 
 			if ((check == json_array) && (json != json_array)) {
-				vbs_msg("Source is a valid JSON object but not a JSON array");
+				output("Source is a valid JSON object but not a JSON array");
 				rc = 1;
 			} else if ((check == json_object) && (json == json_array)) {
-				vbs_msg("Source is a valid JSON array and not a JSON object");
+				output("Source is a valid JSON array and not a JSON object");
 				rc = 1;
 			} else {
-				vbs_msg("Source is a valid JSON %s", json == json_object ? "object" : "array");
+				output("Source is a valid JSON %s", json == json_object ? "object" : "array");
 			}
 		} else {
 			quiet = quiet_arg;
