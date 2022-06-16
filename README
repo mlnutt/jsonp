@@ -58,13 +58,13 @@ Input/Output
 
 Miscellaneous:
         -e,  --escape=CHARS             Escape these CHARS when the enumerate CMD is invoked, the first char is the escape symbol which will also be escaped (default "\\\"")
-        -E,  --enumerate[=CMD]          Enumerate "CMD" for base keys or array elements (default is "echo \"%J\"")
+        -E,  --enumerate[=CMD]          Enumerate "CMD" for base keys or array elements (default is "echo \"%s\"")
         -h,  --help                     Display this help and exit
+        -i,  --ignore-case              Be case insensative when using --key option
         -j,  --json[=KIND]              Validate input as JSON object or JSON array; where KIND is "object", "array", or "any" (default)
-        -J,  --JSON[=KIND]              Same as --json but is verbose
         -q   --quiet, --silent          Suppress output
         -s   --no-messages              Suppress error and warning messages
-        -T   --timeout[=TIME]           Wait TIME seconds before timing out and exiting (5 seconds default)
+        -T   --timeout[=TIME]           Wait TIME milliseconds before timing out and exiting (5000 milliseconds default)
         -V   --version                  Display version information and exit
 
 NOTES (about usage)
