@@ -13,7 +13,35 @@
 #include <stdarg.h>
 #include <getopt.h>
 
-//#include <str.h>
+/*
+ * Yanked from str.c
+ */
+#ifndef _GNU_SOURCE
+	int asprintf(char **buffer, const char *fmt, ...) {
+		va_list va, va2;
+		int needed;
+
+		va_start(va, fmt);
+		va_copy(va2, va);
+
+		needed = vsnprintf(NULL, 0, fmt, va) + 1;
+
+		if (needed > 0) {
+ 			*buffer = realloc(*buffer, needed*sizeof(char));
+			if (buffer)
+				vsnprintf(*buffer, needed, fmt, va2);
+			else
+				needed = -1;
+		}
+
+		va_end(va);
+
+		return needed;
+	}
+#else
+	#define stricmp strcasecmp
+	#define strincmp strncasecmp
+#endif
 
 #include "jsonp.tab.h"
 
@@ -30,17 +58,20 @@ const char * copyright = "Copyright (c) Micah Leiff Nutt, " FIRST_YEAR "-%s\n"
 
 #define VER_RELEASE "release"
 
-#define stricmp strcasecmp
-#define strincmp strncasecmp
-
-int is_bash_var_char(const char c) {
+/*
+ * Yanked from str.c
+ */
+static int is_bash_var_char(const char c) {
         return (isalnum((int)c) || (c == '_'));
 }
 
+/*
+ * Yanked from str.c
+ */
 static int is_bash_var(const char *s) {
-        if ( isalpha(*s) || (*s == '_')) {
+        if (isalpha(*s) || (*s == '_')) {
                 for ( ++s; *s; ++s) {
-                        if ( !is_bash_var_char(*s) ) {
+                        if (!is_bash_var_char(*s)) {
                                 break;
                         }
                 }
@@ -637,7 +668,6 @@ static int run_enum_cmd(char *enum_fmt, char *enum_itm, unsigned enum_cnt) {
    			output("%s", result);
 		}
 		rc = pclose(pp);
-//printf("rc = %d\n", rc/256);
 	} else {
 		rc = -1;
 	}

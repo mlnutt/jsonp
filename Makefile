@@ -24,6 +24,7 @@ $(TARGET): $(TARGET).o
 
 %.lex.c: %.l %.tab.h
 	$(LEX) -o $(patsubst %.l,%.lex.c,$<) $<
+	#$(LEX) --yylineno -o $(patsubst %.l,%.lex.c,$<) $<
 	#cp $(TARGET).lex.c bu/
 
 install:
