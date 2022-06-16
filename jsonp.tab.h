@@ -33,8 +33,11 @@ extern int yyleng;
 #define YY_TYPEDEF_YY_SIZE_T
 typedef size_t yy_size_t;
 #endif
-//extern yy_size_t yyleng;
+#if DESKTOP_SESSION == ubuntu
 extern int yyleng;
+#else
+extern yy_size_t yyleng;
+#endif
 #endif
 
 extern FILE* yyin;

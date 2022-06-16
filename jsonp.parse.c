@@ -1240,7 +1240,7 @@ int main(int argc, char *argv[]) {
 					asprintf(&prefix, "%s", optarg);
 					custom_prefix = 1;
 				} else if (!custom_prefix) {
-					asprintf(&prefix, get_type ? prefix_type : prefix_json);
+					asprintf(&prefix, "%s", get_type ? prefix_type : prefix_json);
 				}
 
 				//unquote |= unquote_keys;
@@ -1299,7 +1299,7 @@ int main(int argc, char *argv[]) {
 				}
 
 				if (prefix && !custom_prefix) {
-					asprintf(&prefix, prefix_type );
+					asprintf(&prefix, "%s", prefix_type);
 				}
 
 				quiet = 1;
