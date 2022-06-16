@@ -130,7 +130,6 @@ value
 */
 
 #define OPTIONS "0123456789=::a::bBce:E::hj::k:l::o:p::u::qsS:tT::w::v::V"
-//#define OPTIONS "0123456789=::a::bBce:E::hij::J::k:l::o:p::u::qsS:tT::w::v::"
 
 typedef enum {
 	OPT_ASSIGNMENT  = '=',
@@ -143,7 +142,6 @@ typedef enum {
  	OPT_HELP        = 'h',
  	OPT_IGNORE_CASE = 'i',
 	OPT_JSON        = 'j',
-//	OPT_JSONV       = 'J',
 	OPT_KEY         = 'k',
 	OPT_LIST        = 'l',
 	OPT_OUTPUT      = 'o',
@@ -157,8 +155,6 @@ typedef enum {
 	OPT_VALUES_ONLY = 'v',
  	OPT_VERSION	= 'V',
 	OPT_WRAP        = 'w',
-
-//	OPT_VERBOSE     = 200,
 } option_t;
 
 static struct option long_options[] = {
@@ -243,7 +239,6 @@ static int quiet           = 0;
 static int quiet_arg       = 0;
 static int no_messages     = 0;
 static int no_messages_arg = 0;
-//static int verbose         = 0;
 
 static int level      = 0;
 static int in_array   = 0;
@@ -1119,7 +1114,7 @@ static void help(void) {
 	printf("\t-j,  --json[=KIND]\t\tValidate input as JSON object or JSON array; where KIND is \"object\", \"array\", or \"any\" (default)\n");
 	printf("\t-q   --quiet, --silent\t\tSuppress output\n");
 	printf("\t-s   --no-messages\t\tSuppress error and warning messages\n");
-	printf("\t-T   --timeout[=TIME]\t\tWait TIME seconds before timing out and exiting (5 seconds default)\n");
+	printf("\t-T   --timeout[=TIME]\t\tWait TIME milliseconds before timing out and exiting (5000 milliseconds default)\n");
 	printf("\t-V   --version\t\t\tDisplay version information and exit\n");
 
 	cleanup(0);
@@ -1186,7 +1181,7 @@ int main(int argc, char *argv[]) {
 				version();
 				cleanup(0);
 				break;
-			case OPT_STRING:
+			case OPT_STRING: // -S, --string
 				asprintf(&string, "%s", optarg);
 
 				yyin = fmemopen(string, strlen(string), "r");
@@ -1194,16 +1189,7 @@ int main(int argc, char *argv[]) {
 			case OPT_OUTPUT:
 				freopen(optarg, "w", stdout);
 				break;
-/*
-			case OPT_JSONV:
-			//case OPT_VERBOSE:
-				if (quiet_arg && get_type) {
-					err_msg("Conflicting --quiet and --verbose arguments");
-				}
-				verbose = 1;
-				//break;
-*/
-			case OPT_JSON:
+			case OPT_JSON: // -j, --json
 				if (optarg) {
 					if (strcasecmp("array", optarg) == 0) {
 						check = json_array;
@@ -1278,11 +1264,6 @@ int main(int argc, char *argv[]) {
 				count_keys = 1;
 				break;
 			case OPT_QUIET: // -q, --quiet (suppress output)
-/*
-				if (verbose && get_type) {
-					err_msg("Conflicting --verbose and --quiet arguments");
-				}
-*/
 				quiet = quiet_arg = 1;
 				break;
 			case OPT_NO_MESSAGES: // -s, --no-messages (suppress error messages)
@@ -1310,10 +1291,6 @@ int main(int argc, char *argv[]) {
 			case OPT_TYPE: // -t, --type (return the type of key)
 				if (count_keys) {
 					err_msg("Conflicting --count and --type arguments");
-/*
-				} else if (quiet_arg && verbose) {
-					err_msg("Conflicting --quiet and --verbose arguments");
-*/
 				} else if (list_keys) {
 					err_msg("Conflicting --list and --type arguments");
 				}
