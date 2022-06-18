@@ -1386,7 +1386,7 @@ int main(int argc, char *argv[]) {
 						*(u_ptr + 1) = 'u';
 					}
 
-					j_before_u = ( j_ptr < u_ptr );
+					j_before_u = !( j_ptr < u_ptr );
 				}
 				break;
 			case OPT_LIST: // -l, --list
